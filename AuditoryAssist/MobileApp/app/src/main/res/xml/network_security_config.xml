@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 개발/사내망용: 모든 클리어텍스트 허용 -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+    <!-- 필요시 특정 IP만 제한적으로 허용하려면 domain-config로 좁혀도 됨 -->
+</network-security-config>
