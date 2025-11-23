@@ -1,0 +1,2397 @@
+[
+    {
+        "id": "97d31c7c54994fe7",
+        "type": "tab",
+        "label": "플로우 1",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "c15302ac394aeabe",
+        "type": "mqtt-broker",
+        "name": "Neopixel 판단 메시지",
+        "broker": "192.168.0.24",
+        "port": 1883,
+        "clientid": "nodered_ui_35_decision",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "e157ca37f50d3f3b",
+        "type": "mqtt-broker",
+        "name": "MQTT Publisher",
+        "broker": "192.168.0.24",
+        "port": 1883,
+        "clientid": "nodered_ui_35",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "018a9cd690a9f095",
+        "type": "mqtt-broker",
+        "name": "UI_Dashboard",
+        "broker": "192.168.0.24",
+        "port": 1883,
+        "clientid": "nodered_ui_35_log",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "35d7681c97fa0418",
+        "type": "mqtt-broker",
+        "name": "Neopixel 상태 시각화",
+        "broker": "192.168.0.24",
+        "port": 1883,
+        "clientid": "nodered_ui_35_status",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "ceb5a03490518575",
+        "type": "mqtt-broker",
+        "name": "MQTT_gas/sensor",
+        "broker": "192.168.0.24",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "dbfaf9aa50bae073",
+        "type": "mqtt-broker",
+        "name": "판단서버 온도값",
+        "broker": "192.168.0.24",
+        "port": 1883,
+        "clientid": "nodered_ui_mqtt_temp",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "775537ccb15ae894",
+        "type": "mqtt-broker",
+        "name": "불꽃 감지 유무확인",
+        "broker": "192.168.0.24",
+        "port": 1883,
+        "clientid": "nodered_ui_shz",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "87beda127546c976",
+        "type": "mqtt-broker",
+        "name": "mq7 sensor",
+        "broker": "192.168.0.24",
+        "port": 1883,
+        "clientid": "nodered_ui_mq7_gauge",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "7aabb1f93967cb66",
+        "type": "mqtt-broker",
+        "name": "AI Raspberry Pi 5 온도",
+        "broker": "192.168.0.24",
+        "port": 1883,
+        "clientid": "nodered_ui_ai_temp",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "51627e6588417bfb",
+        "type": "ui_base",
+        "theme": {
+            "name": "theme-light",
+            "lightTheme": {
+                "default": "#0094CE",
+                "baseColor": "#0094CE",
+                "baseFont": "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Oxygen-Sans,Ubuntu,Cantarell,Helvetica Neue,sans-serif",
+                "edited": true,
+                "reset": false
+            },
+            "darkTheme": {
+                "default": "#097479",
+                "baseColor": "#097479",
+                "baseFont": "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Oxygen-Sans,Ubuntu,Cantarell,Helvetica Neue,sans-serif",
+                "edited": false
+            },
+            "customTheme": {
+                "name": "Untitled Theme 1",
+                "default": "#4B7930",
+                "baseColor": "#4B7930",
+                "baseFont": "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Oxygen-Sans,Ubuntu,Cantarell,Helvetica Neue,sans-serif"
+            },
+            "themeState": {
+                "base-color": {
+                    "default": "#0094CE",
+                    "value": "#0094CE",
+                    "edited": false
+                },
+                "page-titlebar-backgroundColor": {
+                    "value": "#0094CE",
+                    "edited": false
+                },
+                "page-backgroundColor": {
+                    "value": "#fafafa",
+                    "edited": false
+                },
+                "page-sidebar-backgroundColor": {
+                    "value": "#ffffff",
+                    "edited": false
+                },
+                "group-textColor": {
+                    "value": "#1bbfff",
+                    "edited": false
+                },
+                "group-borderColor": {
+                    "value": "#ffffff",
+                    "edited": false
+                },
+                "group-backgroundColor": {
+                    "value": "#ffffff",
+                    "edited": false
+                },
+                "widget-textColor": {
+                    "value": "#111111",
+                    "edited": false
+                },
+                "widget-backgroundColor": {
+                    "value": "#0094ce",
+                    "edited": false
+                },
+                "widget-borderColor": {
+                    "value": "#ffffff",
+                    "edited": false
+                },
+                "base-font": {
+                    "value": "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Oxygen-Sans,Ubuntu,Cantarell,Helvetica Neue,sans-serif"
+                }
+            },
+            "angularTheme": {
+                "primary": "indigo",
+                "accents": "blue",
+                "warn": "red",
+                "background": "grey",
+                "palette": "light"
+            }
+        },
+        "site": {
+            "name": "Node-RED Dashboard",
+            "hideToolbar": "false",
+            "allowSwipe": "false",
+            "lockMenu": "false",
+            "allowTempTheme": "true",
+            "dateFormat": "DD/MM/YYYY",
+            "sizes": {
+                "sx": 48,
+                "sy": 48,
+                "gx": 6,
+                "gy": 6,
+                "cx": 6,
+                "cy": 6,
+                "px": 0,
+                "py": 0
+            }
+        }
+    },
+    {
+        "id": "b653a5516103e7f9",
+        "type": "ui_tab",
+        "name": "화재 시스템",
+        "icon": "fa-fire",
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "be850c2fa8e3e094",
+        "type": "ui_tab",
+        "name": "스타일",
+        "icon": "dashboard",
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "922051f51ed492b4",
+        "type": "ui_tab",
+        "name": "판단서버 온도 수치 대쉬보드",
+        "icon": "dashboard",
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "6cc79a232eecc6db",
+        "type": "ui_tab",
+        "name": "센서 트리거 및 로그확인",
+        "icon": "dashboard",
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "b792f127b5c2779a",
+        "type": "ui_group",
+        "name": "상태 표시",
+        "tab": "b653a5516103e7f9",
+        "order": 1,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "72c8902eea91d55d",
+        "type": "ui_group",
+        "name": "스타일",
+        "tab": "be850c2fa8e3e094",
+        "order": 1,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "de908ae53bcedf13",
+        "type": "ui_group",
+        "name": "MQ5 가스 센서",
+        "tab": "b653a5516103e7f9",
+        "order": 2,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "fe745019e8af85d5",
+        "type": "ui_group",
+        "name": "판단서버 온도 대쉬보드 속성",
+        "tab": "922051f51ed492b4",
+        "order": 1,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "9743eecd8d2cc58c",
+        "type": "ui_group",
+        "name": "불꽃 감지 센서",
+        "tab": "b653a5516103e7f9",
+        "order": 4,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "ae8589717c690fa7",
+        "type": "ui_group",
+        "name": "MQ7 센서",
+        "tab": "b653a5516103e7f9",
+        "order": 3,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "54d4f0f410edbf78",
+        "type": "ui_group",
+        "name": "센서 트리거 테스트",
+        "tab": "6cc79a232eecc6db",
+        "order": 2,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "8662aab2acc7d9ef",
+        "type": "ui_group",
+        "name": "MQTT 로그",
+        "tab": "6cc79a232eecc6db",
+        "order": 3,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "b877c151d3fc8646",
+        "type": "ui_group",
+        "name": "AI서버 온도 대쉬보드 속성",
+        "tab": "922051f51ed492b4",
+        "order": 2,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "2a29de9671487f33",
+        "type": "mqtt-broker",
+        "name": "NodeRED Raspberry Pi 5 온도값",
+        "broker": "192.168.0.24",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "61d595ac57fd943f",
+        "type": "ui_group",
+        "name": "Node-RED 서버 온도 대쉬보드 속성",
+        "tab": "922051f51ed492b4",
+        "order": 3,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "e1e121dbf59c4190",
+        "type": "mqtt-broker",
+        "name": "MQTT payload 초기화",
+        "broker": "192.168.0.24",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "a165b80635c47625",
+        "type": "mqtt-broker",
+        "name": "불꽃 감지 센서",
+        "broker": "192.168.0.24",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "f35a11e38d34e7f5",
+        "type": "mqtt-broker",
+        "name": "일산화탄소 센서",
+        "broker": "192.168.0.24",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "f05088211de4f316",
+        "type": "mqtt-broker",
+        "name": "가스 센서",
+        "broker": "192.168.0.24",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "cea086cfc7553727",
+        "type": "mqtt-broker",
+        "name": "AI 화재 감지 센서",
+        "broker": "192.168.0.24",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "9e05cac1073bb17b",
+        "type": "mqtt-broker",
+        "name": "AI 연기 감지 센서",
+        "broker": "192.168.0.24",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "fe4f4e970a63df3b",
+        "type": "ui_group",
+        "name": "센서 히스토리",
+        "tab": "6cc79a232eecc6db",
+        "order": 3,
+        "disp": true,
+        "width": "12",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "13d8320539149e4e",
+        "type": "ui_tab",
+        "name": "[AI 카메라 실시간 확인]",
+        "icon": "dashboard",
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "d996ac9808a95cdf",
+        "type": "ui_group",
+        "name": "AI 카메라 실시간 확인",
+        "tab": "13d8320539149e4e",
+        "order": 1,
+        "disp": true,
+        "width": "24",
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "0f7ab0ba64b636bf",
+        "type": "mqtt in",
+        "z": "97d31c7c54994fe7",
+        "name": "Neopixel 판단 메시지 수신",
+        "topic": "neopixel/#",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "c15302ac394aeabe",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 620,
+        "wires": [
+            [
+                "f0fe94b0b7319051"
+            ]
+        ]
+    },
+    {
+        "id": "f0fe94b0b7319051",
+        "type": "switch",
+        "z": "97d31c7c54994fe7",
+        "name": "명령 분기",
+        "property": "payload.command",
+        "propertyType": "msg",
+        "rules": [
+            {
+                "t": "eq",
+                "v": "yellow_flash",
+                "vt": "str"
+            },
+            {
+                "t": "eq",
+                "v": "fire_confirmed",
+                "vt": "str"
+            }
+        ],
+        "checkall": "false",
+        "repair": false,
+        "outputs": 2,
+        "x": 380,
+        "y": 620,
+        "wires": [
+            [
+                "617dcc5789d89644"
+            ],
+            [
+                "28459957fbc9d53b"
+            ]
+        ]
+    },
+    {
+        "id": "af8be4881d158fb7",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "🔥 SHZ (불꽃 감지)",
+        "func": "msg.payload = {\n    sensor_id: \"shz_sensor_pico\",\n    event: \"shz_detected\"\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 310,
+        "y": 40,
+        "wires": [
+            [
+                "92aa54bcfb8442c4"
+            ]
+        ]
+    },
+    {
+        "id": "92aa54bcfb8442c4",
+        "type": "mqtt out",
+        "z": "97d31c7c54994fe7",
+        "name": "SHZ 메시지 전송",
+        "topic": "shz/sensor",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "e157ca37f50d3f3b",
+        "x": 540,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "f3692dc99fc6631f",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "☠️ MQ7 (일산화탄소 감지)",
+        "func": "msg.payload = {\n    sensor_id: \"mq7_sensor_pico\",\n    event: \"mq7_detected\"\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 330,
+        "y": 120,
+        "wires": [
+            [
+                "7e23c0684959f5b8"
+            ]
+        ]
+    },
+    {
+        "id": "7e23c0684959f5b8",
+        "type": "mqtt out",
+        "z": "97d31c7c54994fe7",
+        "name": "MQ7 메시지 전송",
+        "topic": "mq7/sensor",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "e157ca37f50d3f3b",
+        "x": 580,
+        "y": 120,
+        "wires": []
+    },
+    {
+        "id": "7247d0551b1507b4",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "🧪 MQ5 (가스 감지)",
+        "func": "msg.payload = {\n    sensor_id: \"gas_sensor_pico\",\n    event: \"gas_detected\"\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 310,
+        "y": 200,
+        "wires": [
+            [
+                "957d68128a7002be"
+            ]
+        ]
+    },
+    {
+        "id": "957d68128a7002be",
+        "type": "mqtt out",
+        "z": "97d31c7c54994fe7",
+        "name": "MQ5 메시지 전송",
+        "topic": "gas/sensor",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "e157ca37f50d3f3b",
+        "x": 580,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "c8f68f8ee34e02d4",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "🔥 AI 불 감지",
+        "func": "msg.payload = {\n    sensor_id: \"AI_D_fire\",\n    event: \"fire_detected\"\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 290,
+        "y": 280,
+        "wires": [
+            [
+                "cbc8155d8f5d3909"
+            ]
+        ]
+    },
+    {
+        "id": "cbc8155d8f5d3909",
+        "type": "mqtt out",
+        "z": "97d31c7c54994fe7",
+        "name": "AI 불 메시지 전송",
+        "topic": "AI_fire_alert",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "e157ca37f50d3f3b",
+        "x": 500,
+        "y": 280,
+        "wires": []
+    },
+    {
+        "id": "17e29e72c99fef0d",
+        "type": "mqtt in",
+        "z": "97d31c7c54994fe7",
+        "name": "Neopixel 수신 로그",
+        "topic": "neopixel/#",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "018a9cd690a9f095",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 128,
+        "y": 499.00000953674316,
+        "wires": [
+            [
+                "9d1c4ce108ab8d07"
+            ]
+        ]
+    },
+    {
+        "id": "9d1c4ce108ab8d07",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "MQTT 로그 누적",
+        "func": "// sensor_id가 없으면 로그 생략\nif (!msg.payload.sensor_id) return null;\n\nlet sensor = msg.payload.sensor_id;\nlet topic = msg.topic;\nlet payloadStr = JSON.stringify(msg.payload);\n\n// ✅ 중복 메시지 방지 (최근 메시지 캐시 비교)\nlet last_entry = context.get(\"last_entry\") || \"\";\nlet current = `[${sensor}] → [${topic}] ${payloadStr}`;\nif (last_entry === current) {\n    return null;  // 중복이면 무시\n}\ncontext.set(\"last_entry\", current);\n\n// ✅ 로그 시간\nlet now = new Date().toLocaleTimeString();\nlet entry = `[${now}] [${sensor}] → [${topic}] ${payloadStr}`;\n\n// ✅ 로그 누적\nlet previous = context.get(\"log\") || \"\";\n\n// 최대 10줄 유지\nlet lines = (current + \"\\n\" + previous).split(\"\\n\").slice(0, 10).join(\"\\n\");\n\n// 저장\ncontext.set(\"log\", lines);\n\n// 출력\nmsg.payload = lines;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 358,
+        "y": 499.00000953674316,
+        "wires": [
+            [
+                "af98c3c871951632"
+            ]
+        ]
+    },
+    {
+        "id": "782657cc123ba6e9",
+        "type": "mqtt in",
+        "z": "97d31c7c54994fe7",
+        "name": "Neopixel 상태 수신",
+        "topic": "neopixel/ALL",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "35d7681c97fa0418",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 130,
+        "y": 780,
+        "wires": [
+            [
+                "860a5218d05d89b6"
+            ]
+        ]
+    },
+    {
+        "id": "860a5218d05d89b6",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "Neopixel 상태 파싱",
+        "func": "// 버튼/브로커 양쪽에서 들어오는 payload를 통일\nif (typeof msg.payload === \"string\") {\n  try { msg.payload = JSON.parse(msg.payload); } catch(e) { /* noop */ }\n}\nconst cmd = (msg.payload && msg.payload.command) || \"\";\n\n// 화면 표기 매핑\nlet displayText = \"✅ 정상 상태!\";\nif (cmd === \"yellow_flash\") {\n  displayText = \"🟡 경고 점멸 중\";\n} else if (cmd === \"fire_confirmed\") {\n  displayText = \"🔴 화재 발생!\";\n} else if (cmd === \"reset_ui\") {\n  displayText = \"✅ 정상 상태!\";\n}\n\n// 공통 출력\nmsg.payload.display = displayText;\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 490,
+        "y": 780,
+        "wires": [
+            [
+                "1baeddb79dec563c"
+            ]
+        ]
+    },
+    {
+        "id": "99d09b2bff4f3c3f",
+        "type": "mqtt in",
+        "z": "97d31c7c54994fe7",
+        "name": "가스 감지 수치값",
+        "topic": "gas/sensor",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "ceb5a03490518575",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 120,
+        "y": 1200,
+        "wires": [
+            [
+                "60accbd2e111de83",
+                "dbe1de6f30cc4c41",
+                "b76afc89bfc791d8"
+            ]
+        ]
+    },
+    {
+        "id": "60accbd2e111de83",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "가스 센서 수치 출력",
+        "func": "try {\n    if (typeof msg.payload === \"string\") {\n        msg.payload = JSON.parse(msg.payload);\n    }\n} catch (e) {\n    node.error(\"JSON 파싱 실패\", msg);\n    return null;\n}\nmsg.value = msg.payload.value || 0;\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 370,
+        "y": 1160,
+        "wires": [
+            [
+                "9910ad24751aecd5"
+            ]
+        ]
+    },
+    {
+        "id": "5151532c8e4c49c2",
+        "type": "mqtt in",
+        "z": "97d31c7c54994fe7",
+        "name": "판단 서버 온도값",
+        "topic": "system/temperature",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "dbfaf9aa50bae073",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 120,
+        "y": 880,
+        "wires": [
+            [
+                "9bba629752020c01"
+            ]
+        ]
+    },
+    {
+        "id": "9bba629752020c01",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "판단서버 온도 수치값",
+        "func": "let value = msg.payload.value;\n\nconst threshold = 65;\n\nmsg.value = value;\n\nif (value >= threshold) {\n    msg.color = \"#e53935\";  // 빨강\n} else if (value >= 60) {\n    msg.color = \"#fbc02d\";  // 노랑\n} else {\n    msg.color = \"#43a047\";  // 초록\n}\n\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 360,
+        "y": 880,
+        "wires": [
+            [
+                "b56932b280e5cfff"
+            ]
+        ]
+    },
+    {
+        "id": "50997bd3df37392d",
+        "type": "mqtt in",
+        "z": "97d31c7c54994fe7",
+        "name": "불꽃 감지 유무확인",
+        "topic": "shz/sensor",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "775537ccb15ae894",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 130,
+        "y": 1520,
+        "wires": [
+            [
+                "921c45b0b9f4363e"
+            ]
+        ]
+    },
+    {
+        "id": "921c45b0b9f4363e",
+        "type": "json",
+        "z": "97d31c7c54994fe7",
+        "name": "Parse JSON",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 330,
+        "y": 1520,
+        "wires": [
+            [
+                "ee16fe2a4b29ce9c",
+                "8f653ee21eb3b03c"
+            ]
+        ]
+    },
+    {
+        "id": "7d83a3257936ac47",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "SHZ 상태 초기화",
+        "func": "flow.set(\"shz_status\", 0);  // 초기값 설정 (정상 상태)\nreturn msg;  // 반드시 msg를 return 해서 다음 노드로 전달!\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 520,
+        "y": 1620,
+        "wires": [
+            [
+                "7d7f634ca873e67f"
+            ]
+        ]
+    },
+    {
+        "id": "9ee7933a2e0bb95f",
+        "type": "mqtt in",
+        "z": "97d31c7c54994fe7",
+        "name": "일산화탄소 감지 수치값",
+        "topic": "mq7/sensor",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "87beda127546c976",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 140,
+        "y": 1360,
+        "wires": [
+            [
+                "d109020345dfca9a"
+            ]
+        ]
+    },
+    {
+        "id": "d109020345dfca9a",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "일산화탄소 센서 수치 출력",
+        "func": "msg.payload = msg.payload.value;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 390,
+        "y": 1360,
+        "wires": [
+            [
+                "583b5337cedd6111",
+                "a41df5864f87295c"
+            ]
+        ]
+    },
+    {
+        "id": "3f40a178eb57f05b",
+        "type": "mqtt in",
+        "z": "97d31c7c54994fe7",
+        "name": "AI Raspberry PI 5 온도값",
+        "topic": "system/temperature/pi5",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "7aabb1f93967cb66",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 960,
+        "wires": [
+            [
+                "5136aa48650b3c84"
+            ]
+        ]
+    },
+    {
+        "id": "5136aa48650b3c84",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "AI Raspberry Pi 5 온도 수치값",
+        "func": "let value = msg.payload.value;\n\nconst threshold = 65;\n\nmsg.value = value;\n\nif (value >= threshold) {\n    msg.color = \"#e53935\";  // 빨강\n} else if (value >= 60) {\n    msg.color = \"#fbc02d\";  // 노랑\n} else {\n    msg.color = \"#43a047\";  // 초록\n}\n\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 440,
+        "y": 960,
+        "wires": [
+            [
+                "5f04673f0420d895"
+            ]
+        ]
+    },
+    {
+        "id": "7d7f634ca873e67f",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "SHZ 상태 가져오기",
+        "func": "let v = msg.payload;\nif (typeof v === \"string\") v = parseInt(v, 10);\nv = (v === 1) ? 1 : 0;\n\nmsg.status = (v === 1) ? \"🔥 불꽃 감지됨!\" : \"✅ 정상 상태\";\nmsg.color =  (v === 1) ? \"red\" : \"green\";\nmsg.background = (v === 1) ? \"#ffcccc\" : \"#ccffcc\";\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 770,
+        "y": 1580,
+        "wires": [
+            [
+                "1f45c1e7e0847aa4"
+            ]
+        ]
+    },
+    {
+        "id": "a386a343b6bbf382",
+        "type": "inject",
+        "z": "97d31c7c54994fe7",
+        "name": "SHZ 상태 초기 트리거",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "\"init\"",
+        "payloadType": "str",
+        "x": 300,
+        "y": 1580,
+        "wires": [
+            [
+                "7d83a3257936ac47"
+            ]
+        ]
+    },
+    {
+        "id": "ee16fe2a4b29ce9c",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "SHZ 상태 감지 발생",
+        "func": "// payload가 문자열 JSON이면 파싱\nif (typeof msg.payload === \"string\") {\n  try { msg.payload = JSON.parse(msg.payload); } catch(e) {}\n}\n\n// value 읽기\nlet v = msg.payload && msg.payload.value;\n\n// 문자열/숫자/불리언 모두 대응\nfunction toBit(x){\n  if (x === 1 || x === \"1\" || x === true) return 1;\n  if (typeof x === \"string\") {\n    x = x.trim();\n    if ([\"감지됨\",\"detected\",\"on\",\"alarm\",\"true\",\"TRUE\"].includes(x)) return 1;\n    if ([\"정상\",\"ok\",\"off\",\"false\",\"FALSE\",\"0\"].includes(x)) return 0;\n  }\n  return 0; // 모르면 안전하게 정상(0)\n}\n\nconst bit = toBit(v);\n\n// 상태 저장하고 다음 노드로 전달\nflow.set(\"shz_status\", bit);\nreturn { payload: bit };\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 530,
+        "y": 1520,
+        "wires": [
+            [
+                "7d7f634ca873e67f"
+            ]
+        ]
+    },
+    {
+        "id": "8f653ee21eb3b03c",
+        "type": "debug",
+        "z": "97d31c7c54994fe7",
+        "name": "debug 1",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 500,
+        "y": 1480,
+        "wires": []
+    },
+    {
+        "id": "dbe1de6f30cc4c41",
+        "type": "debug",
+        "z": "97d31c7c54994fe7",
+        "name": "gas sensor debug",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 370,
+        "y": 1260,
+        "wires": []
+    },
+    {
+        "id": "b76afc89bfc791d8",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "가스 센서 수치 출력",
+        "func": "// 수신 JSON 문자열 → 파싱\nif (typeof msg.payload === \"string\") {\n    msg.payload = JSON.parse(msg.payload);\n}\n\n// chart 용 메시지 구성\nreturn { payload: msg.payload.value };\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 370,
+        "y": 1220,
+        "wires": [
+            [
+                "18b73b93ea39e2c3"
+            ]
+        ]
+    },
+    {
+        "id": "69253c55a71089be",
+        "type": "ui_button",
+        "z": "97d31c7c54994fe7",
+        "name": "MQ7 버튼",
+        "group": "54d4f0f410edbf78",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "☠️ 일산화탄소 감지 센서",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "1",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 100,
+        "y": 120,
+        "wires": [
+            [
+                "f3692dc99fc6631f"
+            ]
+        ]
+    },
+    {
+        "id": "ebf2a3ee93aa8dcd",
+        "type": "ui_button",
+        "z": "97d31c7c54994fe7",
+        "name": "MQ5 버튼",
+        "group": "54d4f0f410edbf78",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "🧪 가스 누출 센서",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "1",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 100,
+        "y": 200,
+        "wires": [
+            [
+                "7247d0551b1507b4"
+            ]
+        ]
+    },
+    {
+        "id": "6622de10fbfa4c00",
+        "type": "ui_button",
+        "z": "97d31c7c54994fe7",
+        "name": "AI 불 버튼",
+        "group": "54d4f0f410edbf78",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "🔥 AI 불 감지",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "1",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 100,
+        "y": 280,
+        "wires": [
+            [
+                "c8f68f8ee34e02d4"
+            ]
+        ]
+    },
+    {
+        "id": "bb425184909522a4",
+        "type": "ui_button",
+        "z": "97d31c7c54994fe7",
+        "name": "SHZ 버튼",
+        "group": "54d4f0f410edbf78",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "🔥 불꽃 감지 센서",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "1",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 100,
+        "y": 40,
+        "wires": [
+            [
+                "af8be4881d158fb7"
+            ]
+        ]
+    },
+    {
+        "id": "6565fbfc4756aa1c",
+        "type": "ui_button",
+        "z": "97d31c7c54994fe7",
+        "name": "SHZ 초기화 버튼",
+        "group": "9743eecd8d2cc58c",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "🔁 초기화",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "0",
+        "payloadType": "str",
+        "topic": "shz/reset",
+        "topicType": "msg",
+        "x": 320,
+        "y": 1660,
+        "wires": [
+            [
+                "7d83a3257936ac47"
+            ]
+        ]
+    },
+    {
+        "id": "617dcc5789d89644",
+        "type": "ui_text",
+        "z": "97d31c7c54994fe7",
+        "group": "b792f127b5c2779a",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "name": "Neopixel 판단 메시지",
+        "label": "감지 상태",
+        "format": "{{msg.payload.command}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#000000",
+        "x": 600,
+        "y": 580,
+        "wires": []
+    },
+    {
+        "id": "28459957fbc9d53b",
+        "type": "ui_text",
+        "z": "97d31c7c54994fe7",
+        "group": "b792f127b5c2779a",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "name": "화재 확정 텍스트",
+        "label": "화재 상태",
+        "format": "🔥 화재 발생: {{msg.payload.command}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#000000",
+        "x": 580,
+        "y": 660,
+        "wires": []
+    },
+    {
+        "id": "af98c3c871951632",
+        "type": "ui_text",
+        "z": "97d31c7c54994fe7",
+        "group": "8662aab2acc7d9ef",
+        "order": 0,
+        "width": "6",
+        "height": "6",
+        "name": "Neopixel 메시지 로그",
+        "label": "📜 메시지 로그",
+        "format": "{{msg.payload}}",
+        "layout": "col-center",
+        "className": "monospace scrollbox",
+        "style": false,
+        "font": "Arial,Arial,Helvetica,sans-serif",
+        "fontSize": "14",
+        "color": "#000000",
+        "x": 598,
+        "y": 499.00000953674316,
+        "wires": []
+    },
+    {
+        "id": "1baeddb79dec563c",
+        "type": "ui_text",
+        "z": "97d31c7c54994fe7",
+        "group": "b792f127b5c2779a",
+        "order": 2,
+        "width": 0,
+        "height": 0,
+        "name": "Neopixel 상태 표시",
+        "label": "Neopixel 상태",
+        "format": "{{msg.payload.display}}",
+        "layout": "row-spread",
+        "className": "",
+        "style": false,
+        "font": "",
+        "fontSize": 16,
+        "color": "#000000",
+        "x": 710,
+        "y": 780,
+        "wires": []
+    },
+    {
+        "id": "9910ad24751aecd5",
+        "type": "ui_gauge",
+        "z": "97d31c7c54994fe7",
+        "name": "가스 수치값",
+        "group": "de908ae53bcedf13",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "gtype": "gage",
+        "title": "MQ5 가스 수치",
+        "label": "units",
+        "format": "{{value}}",
+        "min": 0,
+        "max": "45000",
+        "colors": [
+            "#00b500",
+            "#e6e600",
+            "#ca3838"
+        ],
+        "seg1": "25000",
+        "seg2": "40000",
+        "diff": false,
+        "className": "",
+        "x": 590,
+        "y": 1160,
+        "wires": []
+    },
+    {
+        "id": "583b5337cedd6111",
+        "type": "ui_gauge",
+        "z": "97d31c7c54994fe7",
+        "name": "일산화탄소 수치값",
+        "group": "ae8589717c690fa7",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "gtype": "gage",
+        "title": "MQ7 일산화탄소 수치",
+        "label": "units",
+        "format": "{{value}}",
+        "min": 0,
+        "max": "90000",
+        "colors": [
+            "#00b500",
+            "#e6e600",
+            "#ca3838"
+        ],
+        "seg1": "70000",
+        "seg2": "75000",
+        "diff": false,
+        "className": "",
+        "x": 630,
+        "y": 1320,
+        "wires": []
+    },
+    {
+        "id": "18b73b93ea39e2c3",
+        "type": "ui_chart",
+        "z": "97d31c7c54994fe7",
+        "name": "MQ5 가스 변화 추이",
+        "group": "de908ae53bcedf13",
+        "order": 1,
+        "width": 0,
+        "height": 0,
+        "label": "MQ5 가스 변화 추이",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "45000",
+        "removeOlder": 1,
+        "removeOlderPoints": "",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#1f77b4",
+            "#aec7e8",
+            "#ff7f0e",
+            "#2ca02c",
+            "#98df8a",
+            "#d62728",
+            "#ff9896",
+            "#9467bd",
+            "#c5b0d5"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 610,
+        "y": 1220,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "a41df5864f87295c",
+        "type": "ui_chart",
+        "z": "97d31c7c54994fe7",
+        "name": "MQ7 일산화탄소 변화 추이",
+        "group": "ae8589717c690fa7",
+        "order": 1,
+        "width": 0,
+        "height": 0,
+        "label": "MQ7 일산화탄소 변화 추이",
+        "chartType": "line",
+        "legend": "false",
+        "xformat": "HH:mm:ss",
+        "interpolate": "linear",
+        "nodata": "",
+        "dot": false,
+        "ymin": "0",
+        "ymax": "90000",
+        "removeOlder": 1,
+        "removeOlderPoints": "",
+        "removeOlderUnit": "3600",
+        "cutout": 0,
+        "useOneColor": false,
+        "useUTC": false,
+        "colors": [
+            "#1f77b4",
+            "#aec7e8",
+            "#ff7f0e",
+            "#2ca02c",
+            "#98df8a",
+            "#d62728",
+            "#ff9896",
+            "#9467bd",
+            "#c5b0d5"
+        ],
+        "outputs": 1,
+        "useDifferentColor": false,
+        "className": "",
+        "x": 650,
+        "y": 1400,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "36b3279a241cf89a",
+        "type": "ui_template",
+        "z": "97d31c7c54994fe7",
+        "group": "72c8902eea91d55d",
+        "name": "스타일",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "format": "<style>\n    .scrollbox {\n        font-family: monospace !important;\n        white-space: pre-wrap;\n        overflow-y: auto;\n        max-height: 300px;\n    }\n</style>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "global",
+        "className": "",
+        "x": 1050,
+        "y": 100,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "b56932b280e5cfff",
+        "type": "ui_template",
+        "z": "97d31c7c54994fe7",
+        "group": "fe745019e8af85d5",
+        "name": "판단서버 온도 수치값",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "format": "<div style=\"padding: 10px; border-radius: 10px; background-color: {{msg.color}};\">\n    <h3 style=\"color: white; text-align: center;\">\n        🌡️ 판단 서버 온도: {{msg.value.toFixed(1)}}°C\n    </h3>\n    <div style=\"background-color: white; height: 20px; border-radius: 10px;\">\n        <div\n            style=\"height: 100%; width: {{(msg.value / 80 * 100)}}%; background-color: rgba(0,0,0,0.2); border-radius: 10px;\">\n        </div>\n    </div>\n</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 620,
+        "y": 880,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "1f45c1e7e0847aa4",
+        "type": "ui_template",
+        "z": "97d31c7c54994fe7",
+        "group": "9743eecd8d2cc58c",
+        "name": "SHZ 상태 표시",
+        "order": 1,
+        "width": 0,
+        "height": 0,
+        "format": "<div style=\"padding: 15px; border-radius: 10px; background-color: {{msg.background}}; text-align: center;\">\n    <h3 style=\"color: {{msg.color}}; font-weight: bold;\">\n        🔥 불꽃 감지 센서 상태: {{msg.status}}\n    </h3>\n</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1000,
+        "y": 1580,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "5f04673f0420d895",
+        "type": "ui_template",
+        "z": "97d31c7c54994fe7",
+        "group": "b877c151d3fc8646",
+        "name": "AI서버 온도 수치값",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "format": "<div style=\"padding: 10px; border-radius: 10px; background-color: {{msg.color}};\">\n    <h3 style=\"color: white; text-align: center;\">\n        🌡️ AI 서버 온도: {{msg.value.toFixed(1)}}°C\n    </h3>\n    <div style=\"background-color: white; height: 20px; border-radius: 10px;\">\n        <div\n            style=\"height: 100%; width: {{(msg.value / 80 * 100)}}%; background-color: rgba(0,0,0,0.2); border-radius: 10px;\">\n        </div>\n    </div>\n</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 710,
+        "y": 960,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "bfd9068b486a4b7b",
+        "type": "mqtt in",
+        "z": "97d31c7c54994fe7",
+        "name": "NodeRED Raspberry Pi 5 온도값",
+        "topic": "system/temperature/nodered",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "2a29de9671487f33",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 170,
+        "y": 1060,
+        "wires": [
+            [
+                "23f11f3dcd46929c"
+            ]
+        ]
+    },
+    {
+        "id": "23f11f3dcd46929c",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "NodeRED Raspberry Pi 5 온도값",
+        "func": "let value = msg.payload.value;\nconst threshold = 65;\n\nmsg.value = value;\n\nif (value >= threshold) {\n    msg.color = \"#e53935\";  // 빨강\n} else if (value >= 60) {\n    msg.color = \"#fbc02d\";  // 노랑\n} else {\n    msg.color = \"#43a047\";  // 초록\n}\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 450,
+        "y": 1060,
+        "wires": [
+            [
+                "f72e15e47a11449d"
+            ]
+        ]
+    },
+    {
+        "id": "f72e15e47a11449d",
+        "type": "ui_template",
+        "z": "97d31c7c54994fe7",
+        "group": "61d595ac57fd943f",
+        "name": "Node-RED 서버 온도 수치값",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "format": "<div style=\"padding: 10px; border-radius: 10px; background-color: {{msg.color}};\">\n    <h3 style=\"color: white; text-align: center;\">\n        🌡️ Node-RED 서버 온도: {{msg.value.toFixed(1)}}°C\n    </h3>\n    <div style=\"background-color: white; height: 20px; border-radius: 10px;\">\n        <div\n            style=\"height: 100%; width: {{(msg.value / 80 * 100)}}%; background-color: rgba(0,0,0,0.2); border-radius: 10px;\">\n        </div>\n    </div>\n</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 740,
+        "y": 1060,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "5f7136130c7b4821",
+        "type": "ui_button",
+        "z": "97d31c7c54994fe7",
+        "name": "",
+        "group": "b792f127b5c2779a",
+        "order": 3,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "🔁 초기화",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 93,
+        "y": 732,
+        "wires": [
+            [
+                "db606a1a36ae680d"
+            ]
+        ]
+    },
+    {
+        "id": "db606a1a36ae680d",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "UI 초기화 명령",
+        "func": "msg.payload = { command: \"reset_ui\" };\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 273,
+        "y": 732,
+        "wires": [
+            [
+                "860a5218d05d89b6"
+            ]
+        ]
+    },
+    {
+        "id": "7d2403dcf23627f1",
+        "type": "ui_button",
+        "z": "97d31c7c54994fe7",
+        "name": "",
+        "group": "54d4f0f410edbf78",
+        "order": 5,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "🔁 초기화",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 120,
+        "y": 1780,
+        "wires": [
+            [
+                "9cd1ba5a03b9eac3"
+            ]
+        ]
+    },
+    {
+        "id": "9cd1ba5a03b9eac3",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "초기화 payload",
+        "func": "msg.payload = { command: \"reset_all\", source: \"nodered_ui\" };\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 320,
+        "y": 1780,
+        "wires": [
+            [
+                "94948780810c92b0"
+            ]
+        ]
+    },
+    {
+        "id": "94948780810c92b0",
+        "type": "mqtt out",
+        "z": "97d31c7c54994fe7",
+        "name": "MQTT payload 초기화",
+        "topic": "decision/control",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "e1e121dbf59c4190",
+        "x": 560,
+        "y": 1780,
+        "wires": []
+    },
+    {
+        "id": "b7b5a48b9aa90e12",
+        "type": "mqtt in",
+        "z": "97d31c7c54994fe7",
+        "name": "불꽃 감지 센서",
+        "topic": "shz/sensor",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "a165b80635c47625",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 1880,
+        "wires": [
+            [
+                "e1bc64de8fe80d17"
+            ]
+        ]
+    },
+    {
+        "id": "f8b9c5fd8bee0cdb",
+        "type": "mqtt in",
+        "z": "97d31c7c54994fe7",
+        "name": "일산화탄소 센서",
+        "topic": "mq7/sensor",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "f35a11e38d34e7f5",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 140,
+        "y": 1940,
+        "wires": [
+            [
+                "e1bc64de8fe80d17"
+            ]
+        ]
+    },
+    {
+        "id": "e49af2693c0f28ad",
+        "type": "mqtt in",
+        "z": "97d31c7c54994fe7",
+        "name": "가스 센서",
+        "topic": "gas/sensor",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "f05088211de4f316",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 160,
+        "y": 2000,
+        "wires": [
+            [
+                "e1bc64de8fe80d17"
+            ]
+        ]
+    },
+    {
+        "id": "848bdd24b4ce4858",
+        "type": "mqtt in",
+        "z": "97d31c7c54994fe7",
+        "name": "AI 화재 감지 센서",
+        "topic": "AI_fire_alert",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "cea086cfc7553727",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 140,
+        "y": 2060,
+        "wires": [
+            [
+                "e1bc64de8fe80d17"
+            ]
+        ]
+    },
+    {
+        "id": "e1bc64de8fe80d17",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "[센서 히스토리 업데이트]",
+        "func": "// 보관 개수\nconst N = 20;\n\n// payload 파싱\nlet p = msg.payload;\nif (typeof p === \"string\") {\n  try { p = JSON.parse(p); } catch(e) { p = {}; }\n}\n\nconst sensorId = p.sensor_id || msg.topic || \"unknown\";\n\n// 상태 텍스트 산정\nlet statusText = p.status;\nif (!statusText) {\n  const ev = (p.event || \"\").toLowerCase();\n  statusText = (ev.includes(\"detected\") || ev.includes(\"fire\") || ev.includes(\"smoke\")) ? \"감지\" : \"정상\";\n}\nconst isAlert = (statusText !== \"정상\");\nconst value = (p.value !== undefined) ? p.value : null;\n\n// 타임스탬프 문자열\nfunction tsStr(t){\n  const d = new Date(t);\n  const z = n => (n<10?\"0\":\"\")+n;\n  return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`;\n}\nconst ts = Date.now();\n\n// 히스토리 적재 (flow context)\nlet hist = flow.get(\"sensor_hist\") || {};\nlet arr = hist[sensorId] || [];\narr.push({ ts, tsStr: tsStr(ts), sensor: sensorId, status: statusText, alert: isAlert, value });\nif (arr.length > N) arr = arr.slice(-N);\nhist[sensorId] = arr;\nflow.set(\"sensor_hist\", hist);\n\n// 다음 단계에서 합치기 위해 전달\nmsg.hist = hist;\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 430,
+        "y": 2000,
+        "wires": [
+            [
+                "9d0dc3d44285fcf6"
+            ]
+        ]
+    },
+    {
+        "id": "9d0dc3d44285fcf6",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "[히스토리 테이블 구성]",
+        "func": "// 히스토리 테이블 구성 (상태만 색 강조)\nconst hist = flow.get(\"sensor_hist\") || {};\n\n// 모든 센서 히스토리를 합치고 최신순 정렬\nlet rows = [];\nfor (const k in hist) rows = rows.concat(hist[k]);\nrows.sort((a, b) => b.ts - a.ts);\n\n// 상태 컬럼만 HTML 색상 적용\nconst colored = rows.map(r => {\n  const statusText = r.status || (r.alert ? \"감지\" : \"정상\");\n  const statusHTML = r.alert\n    ? \"<span style='color:#c62828; font-weight:600;'>\"+statusText+\"</span>\" // 빨강 굵게\n    : \"<span style='color:#2e7d32;'>\"+statusText+\"</span>\";                 // 초록\n\n  return {\n    tsStr: r.tsStr,                 // 시간 (예: 2025-08-13 19:23:45)\n    sensor: r.sensor,               // 센서 ID\n    status: statusHTML,             // ← 색 강조된 상태\n    value: (r.value ?? \"\")          // 값(없으면 빈칸)\n  };\n});\n\n// ui_table에 투입\nmsg.payload = colored;\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 700,
+        "y": 2000,
+        "wires": [
+            [
+                "3064e6bd4cfb578a"
+            ]
+        ]
+    },
+    {
+        "id": "3064e6bd4cfb578a",
+        "type": "ui_table",
+        "z": "97d31c7c54994fe7",
+        "group": "fe4f4e970a63df3b",
+        "name": "센서 히스토리",
+        "order": 0,
+        "width": "10",
+        "height": "10",
+        "columns": [
+            {
+                "field": "tsStr",
+                "title": "시간",
+                "width": "150",
+                "align": "left",
+                "formatter": "html",
+                "formatterParams": {
+                    "target": "_blank"
+                }
+            },
+            {
+                "field": "sensor",
+                "title": "센서",
+                "width": "120",
+                "align": "left",
+                "formatter": "html",
+                "formatterParams": {
+                    "target": "_blank"
+                }
+            },
+            {
+                "field": "status",
+                "title": "상태",
+                "width": "150",
+                "align": "left",
+                "formatter": "html",
+                "formatterParams": {
+                    "target": "_blank"
+                }
+            },
+            {
+                "field": "value",
+                "title": "값",
+                "width": "100",
+                "align": "left",
+                "formatter": "html",
+                "formatterParams": {
+                    "target": "_blank"
+                }
+            }
+        ],
+        "outputs": 0,
+        "cts": false,
+        "x": 930,
+        "y": 2000,
+        "wires": []
+    },
+    {
+        "id": "9fcbf28951bf8b5f",
+        "type": "ui_template",
+        "z": "97d31c7c54994fe7",
+        "group": "d996ac9808a95cdf",
+        "name": "AI 카메라 실시간 확인",
+        "order": 0,
+        "width": "24",
+        "height": "24",
+        "format": "<div style=\"text-align:center;\">\n  <div style=\"margin-bottom:6px;\">\n    <button class=\"md-button md-raised\" ng-click=\"reconnect()\">🔄 재연결</button>\n    <button class=\"md-button md-raised\" ng-click=\"snapshotMode()\">🖼 스냅샷 모드</button>\n    <button class=\"md-button md-raised\" ng-click=\"saveShot()\">⬇️ 스냅샷 저장</button>\n    <button class=\"md-button md-raised\" ng-click=\"full()\">⤢ 전체화면</button>\n  </div>\n\n  <img id=\"aiStream\"\n       src=\"http://192.168.0.57:5055/video\"\n       style=\"width:100%;max-width:1024px;border-radius:12px;box-shadow:0 4px 14px rgba(0,0,0,.15);\" />\n  <div id=\"aiStatus\" style=\"margin-top:6px;color:#666;\">⏳ 연결 시도중...</div>\n</div>\n\n<script>\n  (function(scope){\n  const STREAM = \"http://192.168.0.57:5055/video\";\n  const SNAP   = \"http://192.168.0.57:5055/snapshot.jpg\";\n  const img = document.getElementById('aiStream');\n  const st  = document.getElementById('aiStatus');\n\n  let useSnapshotFallback = false;\n  let timer = null;\n\n  function show(s){ st.textContent = s; }\n\n  function startStream(){\n    if (timer) { clearInterval(timer); timer = null; }\n    useSnapshotFallback = false;\n    img.src = STREAM;\n    show(\"⏳ 스트림 연결 중...\");\n  }\n\n  function startSnapshot(){\n    if (timer) { clearInterval(timer); }\n    useSnapshotFallback = true;\n    show(\"🖼 스냅샷 모드(1초 갱신)\");\n    timer = setInterval(()=> img.src = SNAP + \"?t=\" + Date.now(), 1000);\n  }\n\n  img.onload  = ()=> show(useSnapshotFallback ? \"✅ 스냅샷 표시 중\" : \"✅ 스트림 연결됨\");\n  img.onerror = ()=>{\n    show(\"❌ 연결 오류 → 5초 후 재시도\");\n    if (!useSnapshotFallback) startSnapshot();\n    setTimeout(startStream, 5000);\n  };\n\n  // 버튼 핸들러\n  scope.reconnect   = startStream;\n  scope.snapshotMode= startSnapshot;\n  scope.saveShot    = ()=> window.open(SNAP + \"?t=\" + Date.now(), \"_blank\");\n  scope.full        = ()=> img.requestFullscreen && img.requestFullscreen();\n\n  startStream();\n})(scope);\n</script>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 160,
+        "y": 2200,
+        "wires": [
+            [
+                "2d41b627c4841a2c"
+            ]
+        ]
+    },
+    {
+        "id": "2d41b627c4841a2c",
+        "type": "debug",
+        "z": "97d31c7c54994fe7",
+        "name": "AI 카메라 디버깅",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 380,
+        "y": 2200,
+        "wires": []
+    },
+    {
+        "id": "9476f872a300c9cf",
+        "type": "ui_button",
+        "z": "97d31c7c54994fe7",
+        "name": "수위 버튼",
+        "group": "54d4f0f410edbf78",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "💧 물 넘침 감지",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "1",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 100,
+        "y": 360,
+        "wires": [
+            [
+                "2cb0c0509b437354"
+            ]
+        ]
+    },
+    {
+        "id": "2cb0c0509b437354",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "💧 수위 감지",
+        "func": "msg.payload = {\n    sensor_id: \"water_level_1\",\n    event: \"water_detected\"\n};\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 290,
+        "y": 360,
+        "wires": [
+            [
+                "68dab10b57fb2911"
+            ]
+        ]
+    },
+    {
+        "id": "68dab10b57fb2911",
+        "type": "mqtt out",
+        "z": "97d31c7c54994fe7",
+        "name": "수위 메시지 전송",
+        "topic": "water_level/sensor",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "e157ca37f50d3f3b",
+        "x": 500,
+        "y": 360,
+        "wires": []
+    },
+    {
+        "id": "9b6239808e4ab16f",
+        "type": "ui_button",
+        "z": "97d31c7c54994fe7",
+        "name": "초인종 버튼",
+        "group": "54d4f0f410edbf78",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "🔔 초인종 감지",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "1",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 110,
+        "y": 440,
+        "wires": [
+            [
+                "00888b5e1fa71785"
+            ]
+        ]
+    },
+    {
+        "id": "00888b5e1fa71785",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "🔔 초인종 감지",
+        "func": "msg.payload = {\n    sensor_id: \"doorbell_1\",\n    event: \"button_pressed\"\n};\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 300,
+        "y": 440,
+        "wires": [
+            [
+                "3e063fc65f1242a4"
+            ]
+        ]
+    },
+    {
+        "id": "3e063fc65f1242a4",
+        "type": "mqtt out",
+        "z": "97d31c7c54994fe7",
+        "name": "초인종 메시지 전송",
+        "topic": "doorbell/sensor",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "e157ca37f50d3f3b",
+        "x": 510,
+        "y": 440,
+        "wires": []
+    },
+    {
+        "id": "cd5a758e40c619e6",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-dashboard": "3.6.5",
+            "node-red-node-ui-table": "0.4.5"
+        }
+    }
+]
