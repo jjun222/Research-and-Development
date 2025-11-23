@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- 앱 기본 테마: Material3, 액션바 없음 -->
+    <style name="Theme.InterfaceUI" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- 상태바/네비게이션바는 기본값 사용 -->
+        <!-- 색상은 values/colors.xml에 있는 기본값 사용 -->
+        <!-- Button 톤달 스타일은 레이아웃에서 ?attr/materialButtonFilledTonalStyle 로 참조 -->
+    </style>
+
+</resources>
