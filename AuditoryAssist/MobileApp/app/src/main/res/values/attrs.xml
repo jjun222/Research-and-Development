@@ -1,0 +1,6 @@
+<resources>
+    <declare-styleable name="FixedAspectFrame">
+        <attr name="ratioW" format="integer" />
+        <attr name="ratioH" format="integer" />
+    </declare-styleable>
+</resources>
