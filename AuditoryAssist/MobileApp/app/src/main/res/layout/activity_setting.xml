@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context=".ui1.SettingActivity">
+
+    <!-- 상단바 -->
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="?attr/colorPrimary"
+        app:title="@string/title_setting"
+        app:titleTextColor="@android:color/white"
+        app:navigationIcon="@drawable/ic_arrow_back_24" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginTop="?attr/actionBarSize">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- 디바이스 선택 -->
+            <TextView
+                android:id="@+id/tvDeviceLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/label_device"
+                android:textAppearance="?attr/textAppearanceBodyLarge" />
+
+            <Spinner
+                android:id="@+id/deviceSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:minHeight="48dp"
+                android:layout_marginTop="8dp" />
+
+            <!-- 색상 미리보기 + HEX + 선택 버튼 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <View
+                    android:id="@+id/colorPreview"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginEnd="12dp"
+                    android:background="@drawable/bg_color_preview" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:hint="@string/hint_hex">
+
+                    <!-- SettingActivity에서 tvHex로 참조 -->
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/tvHex"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="48dp"
+                        android:inputType="textNoSuggestions"
+                        android:maxLength="9"
+                        android:text="@string/hex_white" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnPickColor"
+                    style="?attr/materialButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:text="@string/action_pick_color" />
+            </LinearLayout>
+
+            <!-- 프리셋 색상 -->
+            <TextView
+                android:id="@+id/tvPreset"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/title_preset_colors"
+                android:textAppearance="?attr/textAppearanceBodyLarge" />
+
+            <!-- SettingActivity에서 chipGroupPreset으로 참조 -->
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/chipGroupPreset"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                app:singleLine="false"
+                app:chipSpacingHorizontal="8dp"
+                app:chipSpacingVertical="8dp">
+
+                <!-- 각 칩은 width/height 명시 + 48dp 터치 타깃 -->
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipWhite"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    style="@style/Widget.Material3.Chip.Assist.Elevated"
+                    android:paddingHorizontal="12dp"
+                    android:text="@string/hex_white"
+                    android:textColor="@android:color/black"
+                    app:chipBackgroundColor="@android:color/white"
+                    app:chipMinTouchTargetSize="48dp"
+                    app:ensureMinTouchTargetSize="true" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipRed"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    style="@style/Widget.Material3.Chip.Assist.Elevated"
+                    android:paddingHorizontal="12dp"
+                    android:text="@string/hex_red"
+                    android:textColor="@android:color/white"
+                    app:chipBackgroundColor="#F44336"
+                    app:chipMinTouchTargetSize="48dp"
+                    app:ensureMinTouchTargetSize="true" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipGreen"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    style="@style/Widget.Material3.Chip.Assist.Elevated"
+                    android:paddingHorizontal="12dp"
+                    android:text="@string/hex_green"
+                    android:textColor="@android:color/white"
+                    app:chipBackgroundColor="#4CAF50"
+                    app:chipMinTouchTargetSize="48dp"
+                    app:ensureMinTouchTargetSize="true" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipBlue"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    style="@style/Widget.Material3.Chip.Assist.Elevated"
+                    android:paddingHorizontal="12dp"
+                    android:text="@string/hex_blue"
+                    android:textColor="@android:color/white"
+                    app:chipBackgroundColor="#2196F3"
+                    app:chipMinTouchTargetSize="48dp"
+                    app:ensureMinTouchTargetSize="true" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipYellow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    style="@style/Widget.Material3.Chip.Assist.Elevated"
+                    android:paddingHorizontal="12dp"
+                    android:text="@string/hex_yellow"
+                    android:textColor="@android:color/black"
+                    app:chipBackgroundColor="#FFEB3B"
+                    app:chipMinTouchTargetSize="48dp"
+                    app:ensureMinTouchTargetSize="true" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipPurple"
+                    android:layout_width="wrap_content"
+                    android:layout_height="48dp"
+                    style="@style/Widget.Material3.Chip.Assist.Elevated"
+                    android:paddingHorizontal="12dp"
+                    android:text="@string/hex_purple"
+                    android:textColor="@android:color/white"
+                    app:chipBackgroundColor="#9C27B0"
+                    app:chipMinTouchTargetSize="48dp"
+                    app:ensureMinTouchTargetSize="true" />
+            </com.google.android.material.chip.ChipGroup>
+
+            <!-- 밝기 슬라이더 -->
+            <TextView
+                android:id="@+id/tvBrightnessLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/label_brightness"
+                android:textAppearance="?attr/textAppearanceBodyLarge" />
+
+            <SeekBar
+                android:id="@+id/sbBrightness"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:max="255"
+                android:progress="255" />
+
+            <!-- 적용 버튼 -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnApply"
+                style="?attr/materialButtonStyle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:text="@string/action_apply" />
+        </LinearLayout>
+    </ScrollView>
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>
