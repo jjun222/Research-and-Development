@@ -1,0 +1,183 @@
+<resources>
+    <string name="app_name">스마트홈 앱</string>
+    <string name="color_select">색상 선택</string>
+    <string name="color_apply">색상 적용</string>
+    <string name="check_status">상태 확인하기</string>
+    <string name="reset_system">초기화</string>
+    <string name="server_status_label">판단 서버 상태: 확인 중...</string>
+    <string name="device_status_label">기기 상태: 없음</string>
+    <string name="notification_list">알림 기록 목록</string>
+    <string name="clear_all">모두 삭제</string>
+    <string name="notification_title">알림 제목</string>
+    <string name="notification_body">알림 내용</string>
+    <string name="notification_time">2025-08-05 10:00:00</string>
+    <string name="settings_title">설정</string>
+    <string name="alias_optional">별칭(선택)</string>
+    <string name="id_or_topic">ID 또는 Topic</string>
+    <string name="publisher">Publisher</string>
+    <string name="subscriber">Subscriber</string>
+    <string name="back">뒤로가기</string>
+    <string name="add">추가</string>
+    <string name="delete">삭제</string>
+    <string name="home">홈</string>
+    <string name="device_add_title">기기 등록</string>
+    <string name="save">저장</string>
+    <string name="cancel">취소</string>
+    <string name="msg_enter_id_or_topic">ID/Topic을 입력하세요</string>
+    <string name="msg_no_device_selected">선택된 기기가 없습니다</string>
+    <string name="device_delete_confirm">%1$s 기기를 삭제할까요?</string>
+    <string name="status_format_server">서버 상태: %1$s</string>
+    <string name="status_format_device">기기 상태: %1$s</string>
+    <string name="checking">확인 중…</string>
+    <string name="connecting">연결 중…</string>
+    <string name="connected_wait">연결됨 (대기 중…)</string>
+    <string name="not_connected">MQTT 미연결</string>
+    <string name="timeout">응답 없음(타임아웃)</string>
+
+    <!-- 상태 라벨 -->
+    <string name="status_reset_server">서버 상태: 초기화</string>
+    <string name="status_reset_device">기기 상태: 초기화</string>
+
+    <!-- 서식 문자열 -->
+    <string name="server_status_fmt">서버 상태: %1$s</string>
+    <string name="device_status_fmt">기기 상태: %1$s</string>
+
+    <!-- 메시지 파편 -->
+    <string name="status_connecting">연결 중…</string>
+    <string name="status_connected_waiting">연결됨 (대기 중…)</string>
+    <string name="status_mqtt_not_connected">MQTT 미연결</string>
+    <string name="status_checking">확인 중…</string>
+    <string name="status_timeout">응답 없음(타임아웃)</string>
+    <string name="status_ok_with_payload">정상 (%1$s)</string>
+    <string name="status_offline_with_payload">오프라인 (%1$s)</string>
+    <string name="status_received_payload">수신: %1$s</string>
+    <string name="status_connect_failed">연결 실패 (%1$s)</string>
+
+    <!-- menu_device_select.xml [string] -->
+    <string name="menu_add">추가</string>
+    <string name="menu_delete">삭제</string>
+    <string name="menu_home">홈</string>
+
+    <!-- activity_webview.xml [string] -->
+    <string name="camera_title">실시간 영상</string>
+
+    <string name="device_select_title">기기 선택</string>
+    <string name="menu_notification">알림 기록</string>
+    <string name="no_notifications">알림이 없습니다</string>
+    <string name="menu_check">점검 모드</string>
+    <string name="menu_log">로그 확인 모드</string>
+    <string name="menu_setting">설정 모드</string>
+    <string name="menu_camera">카메라 모드</string>
+    <string name="status_ok">정상</string>
+    <string name="status_ng">이상</string>
+
+    <!-- Main buttons -->
+    <string name="go_check">상태 확인</string>
+    <string name="go_log">기기 로그</string>
+    <string name="go_setting">색상/밝기 조절</string>
+    <string name="go_camera">실시간 영상 확인</string>
+    <string name="go_device">기기 등록 및 삭제</string>
+    <string name="go_notification">푸시 알림</string>
+
+    <!-- Screen titles -->
+    <string name="log_title">Logs</string>
+
+    <!-- Samples -->
+    <string name="sample_title">Sample</string>
+    <string name="sample_body">Sample message</string>
+
+    <!-- res/values/strings.xml 일부 -->
+    <string name="notifications_title">알림</string>
+    <string name="cd_add_notification">알림 추가</string>
+    <string name="cd_clear_notifications">알림 전체 삭제</string>
+
+    <!-- res/layout/activity_setting.xml-->
+    <string name="label_device">Device</string>
+    <string name="desc_device_spinner">색을 적용할 디바이스 선택</string>
+    <string name="action_pick_color">색 선택</string>
+    <string name="action_apply">적용</string>
+    <string name="hex_default">#FFFFFF</string>
+    <string name="brightness_label">밝기: %1$d</string>
+    <string name="empty" translatable="false"></string>
+
+    <!-- main/java/com.example.interfaceui/ui1/SettingActivity.kt -->
+    <string name="setting_title">설정 모드</string>
+
+    <string name="pick_color">색 선택</string>
+    <string name="brightness">Brightness(0~255)</string>
+    <string name="apply">적용</string>
+    <string name="sent">전송했습니다</string>
+    <string name="manage_device">디바이스 관리</string>
+    <string name="rename">이름 변경</string>
+
+    <!-- main/java/com.example.interfaceui/ui1/CheckActivity.kt -->
+    <string name="device">Device</string>
+    <string name="add_device">디바이스 추가</string>
+    <string name="alias_or_name">별칭(이름)을 입력하세요</string>
+    <string name="delete_device">디바이스 삭제</string>
+    <string name="delete_device_confirm">선택한 디바이스를 삭제할까요?</string>
+
+    <!-- main/res/layout/activity_setting.xml -->
+    <string name="device_label">Device</string>
+    <string name="preset_colors">프리셋 색상</string>
+
+    <!-- main/res/layout/activity_check.xml -->
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_connected">Connected</string>
+    <string name="label_log">Log</string>
+    <string name="action_init">Init</string>
+
+    <string name="title_device_select">기기 선택</string>
+    <string name="action_add_device">기기 추가</string>
+    <string name="action_delete_device">기기 삭제</string>
+    <string name="hint_device_alias">별칭</string>
+    <string name="msg_delete_device_confirm">%1$s 을(를) 삭제할까요?</string>
+    <string name="msg_select_device_first">먼저 기기를 선택하세요</string>
+
+    <string name="title_setting">설정</string>
+    <string name="hint_hex">#RRGGBB</string>
+    <string name="title_preset_colors">프리셋 색상</string>
+    <string name="label_brightness">밝기 (0~255)</string>
+
+    <!-- 프리셋 표기용 -->
+    <string name="hex_white">#FFFFFF</string>
+    <string name="hex_red">#FF0000</string>
+    <string name="hex_green">#00FF00</string>
+    <string name="hex_blue">#0000FF</string>
+    <string name="hex_yellow">#FFFF00</string>
+    <string name="hex_purple">#8000FF</string>
+
+    <string name="no_devices">등록되어 있는 기기가 없습니다.</string>
+
+    <!-- activity_situation_status.xml -->
+    <string name="menu_situation_status">상황 상태 확인</string>
+    <string name="status_normal">정상</string>
+    <string name="status_detected">감지</string>
+    <string name="sensor_ai_fire">AI 카메라 불 감지 상태</string>
+    <string name="sensor_ai_smoke">AI 연기 감지</string>
+    <string name="sensor_shz">불꽃 상태</string>
+    <string name="sensor_mq5">가스 누출 상태</string>
+    <string name="sensor_mq7">일산화탄소 누출 상태</string>
+    <string name="sensor_water">물 넘침 상태</string>
+    <string name="sensor_doorbell">초인종 상태</string>
+    <string name="sensor_all_true">화재 감지 상태</string>
+
+    <!-- Live Video 화면용 -->
+    <string name="live_error_generic">라이브 영상을 불러오지 못했습니다. 네트워크 상태를 확인하고 다시 시도하세요.</string>
+
+    <!-- (선택) 여유로 넣어두면 좋아요 -->
+    <string name="live_title">실시간 영상</string>
+    <string name="live_loading">로딩 중…</string>
+    <string name="live_retry">다시 시도</string>
+
+
+    <string-array name="device_list">
+        <item>neopixel_1</item>
+        <item>neopixel_2</item>
+        <item>mq7_sensor_pico</item>
+        <item>gas_sensor_pico</item>
+        <item>shz_sensor_pico</item>
+        <item>AI_D_fire</item>
+        <item>AI_D_smoke</item>
+    </string-array>
+</resources>
