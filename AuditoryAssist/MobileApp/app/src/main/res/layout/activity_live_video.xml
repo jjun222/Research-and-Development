@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/liveRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000"
+    tools:context=".ui1.LiveVideoActivity">
+
+    <!-- 상단 툴바 -->
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:minHeight="?attr/actionBarSize"
+        android:background="?attr/colorSurface"
+        android:title="@string/live_title"
+        android:contentDescription="@string/back"
+        app:navigationIcon="@drawable/ic_arrow_back_24"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- ✅ 4:3 고정 비율 컨테이너 -->
+    <com.example.interfaceui.widget.FixedAspectFrame
+        android:id="@+id/videoBox"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:background="#000000"
+        app:ratioW="4"
+        app:ratioH="3"
+        app:layout_constraintTop_toBottomOf="@id/toolbar"
+        app:layout_constraintBottom_toTopOf="@id/btnReconnect"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- 실제 프레임 표시: 잘림 없이 fitCenter -->
+        <ImageView
+            android:id="@+id/imgFrame"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@string/live_title"
+            android:background="#000000"
+            android:adjustViewBounds="true"
+            android:scaleType="fitCenter"
+            tools:src="@drawable/ic_launcher_foreground" />
+    </com.example.interfaceui.widget.FixedAspectFrame>
+
+    <!-- 상태 텍스트 (반투명 오버레이) -->
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:text="@string/live_loading"
+        android:textColor="@android:color/white"
+        android:background="#66000000"
+        android:maxLines="2"
+        app:layout_constraintStart_toStartOf="@id/videoBox"
+        app:layout_constraintEnd_toEndOf="@id/videoBox"
+        app:layout_constraintTop_toTopOf="@id/videoBox"
+        tools:text="연결 중… http://192.168.0.57:5055/video" />
+
+    <!-- FPS 표시 (오버레이) -->
+    <TextView
+        android:id="@+id/tvFps"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:text="FPS: --"
+        android:textStyle="bold"
+        android:textColor="@android:color/white"
+        android:background="#66000000"
+        app:layout_constraintTop_toTopOf="@id/videoBox"
+        app:layout_constraintEnd_toEndOf="@id/videoBox"
+        tools:text="FPS: 29.7" />
+
+    <!-- 다시 연결 버튼 -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnReconnect"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:text="@string/live_retry"
+        android:insetTop="8dp"
+        android:insetBottom="8dp"
+        app:cornerRadius="20dp"
+        app:iconGravity="textStart"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintWidth_percent="0.9" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>
