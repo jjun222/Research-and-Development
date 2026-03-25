@@ -2,7 +2,7 @@
 # Vibrator subscriber for ALL-TRUE fire alert
 # Topics:
 #   - vibrator/<DEVICE_ID>
-#   - vibrator/broadcast
+#   - vibrator/broadcast   (optional)
 #
 # Commands:
 #   - {"command":"vibrate_fire_alert","duration_ms":10000,"on_ms":400,"off_ms":200,"intensity":0.85}
@@ -11,20 +11,21 @@
 
 import sys, time, ubinascii, machine, socket, os
 
-# --- Pico W 전용 MicroPython 확인
+# --- 반드시 Pico W 전용 MicroPython이어야 합니다. (network 모듈 확인)
 try:
     import network
 except ImportError:
     raise OSError(
         "이 보드에는 'network' 모듈이 없습니다.\n"
-        "Pico W 전용 MicroPython 펌웨어를 설치하세요."
+        "Pico W 전용 MicroPython 펌웨어를 Thonny에서 설치하세요.\n"
+        "도구 > 옵션 > 인터프리터 > MicroPython 설치/업데이트 > 장치: Raspberry Pi Pico W"
     )
 
 from micropython import const
 from machine import Pin, PWM
-import ujson
+import ujson  # wifi_config.json 저장/로드용
 
-# MQTT 라이브러리: robust 우선, simple 폴백
+# MQTT 라이브러리: robust 우선, simple로 폴백
 try:
     from umqtt.robust import MQTTClient
 except Exception:
@@ -33,18 +34,18 @@ except Exception:
     except Exception:
         raise OSError(
             "umqtt 라이브러리를 찾을 수 없습니다.\n"
-            "REPL에서 설치:\n"
-            "  import mip; mip.install('umqtt.simple'); mip.install('umqtt.robust')"
+            "REPL에서 설치하세요:\n"
+            "  import mip; mip.install('umqtt.simple'); mip.install('umqtt.robust')\n"
+            "또는 /umqtt/simple.py, /umqtt/robust.py 파일을 보드에 복사하세요."
         )
 
-# =========================================================
-# 기본 설정
-# =========================================================
+# ====== Wi-Fi / MQTT 기본 설정 + 설정 파일 ======
+# 비워두면 wifi_config.json이 없을 때 바로 AP 설정 모드로 진입
 WIFI_SSID     = ""
 WIFI_PASSWORD = ""
 
-CONFIG_PATH       = "wifi_config.json"
-DEFAULT_BROKER_IP = "192.168.0.33"
+CONFIG_PATH       = "wifi_config.json"     # 플래시에 저장
+DEFAULT_BROKER_IP = "192.168.0.24"
 
 MQTT_BROKER = DEFAULT_BROKER_IP
 PORT        = const(1883)
@@ -57,16 +58,10 @@ SUB_TOPICS = (
     b"vibrator/broadcast",
 )
 
-WIFI_RETRY_MAX         = const(20)
-WIFI_RETRY_WAIT_MS     = const(500)
-BOOT_SETTLE_MS         = const(2500)   # 외부전원 단독 부팅 안정화 대기
-BROKER_PROBE_TIMEOUT_S = const(2)
-MAIN_LOOP_SLEEP_MS     = const(5)
-RECONNECT_DELAY_MS     = const(2000)
+# Wi-Fi 재시도 횟수
+WIFI_RETRY_MAX = const(15)
 
-# =========================================================
-# AP 모드(설정 포털)
-# =========================================================
+# ====== AP 모드(설정 포털) ======
 AP_SSID = "vibrator_setup"
 AP_PW   = "123456789"  # 8자 이상
 
@@ -82,51 +77,24 @@ Content-Type: text/html; charset=utf-8\r
 <form method="POST" action="/save">
   SSID: <input name="ssid"><br>
   PW:   <input name="pw" type="password"><br>
-  Broker IP: <input name="broker" value="%s"><br>
+  Broker IP: <input name="broker" value="192.168.0.24"><br>
   <button type="submit">저장</button>
 </form>
 </body>
 </html>
-""" % DEFAULT_BROKER_IP
+"""
 
 HTML_SAVED = """\
 HTTP/1.1 200 OK\r
 Content-Type: text/html; charset=utf-8\r
 \r
 <html><body>
-<p>설정이 저장되었습니다. 3초 후 재부팅합니다.</p>
+<p>저장되었습니다. 3초 후 재부팅합니다.</p>
 </body></html>
 """
 
-# =========================================================
-# LED 상태 표시
-# =========================================================
-try:
-    LED = Pin("LED", Pin.OUT)
-except Exception:
-    LED = None
-
-def led_on():
-    if LED:
-        LED.value(1)
-
-def led_off():
-    if LED:
-        LED.value(0)
-
-def led_blink(times=1, on_ms=120, off_ms=120):
-    if not LED:
-        return
-    for _ in range(times):
-        LED.value(1)
-        time.sleep_ms(on_ms)
-        LED.value(0)
-        time.sleep_ms(off_ms)
-
-# =========================================================
-# 핀 매핑 & PWM
-# =========================================================
-PWM_FREQ = const(1000)  # 1kHz
+# ====== 핀 매핑 & PWM ======
+PWM_FREQ = const(1000)  # 1 kHz
 
 ENA = PWM(Pin(15))   # 모터 A
 IN1 = Pin(14, Pin.OUT)
@@ -139,14 +107,13 @@ IN4 = Pin(10, Pin.OUT)
 ENA.freq(PWM_FREQ)
 ENB.freq(PWM_FREQ)
 
-# =========================================================
-# 모터 제어
-# =========================================================
+# ====== 모터 제어 ======
 def set_motor_forward():
     IN1.value(1); IN2.value(0)
     IN3.value(1); IN4.value(0)
 
-def set_power_ratio(ratio):
+def set_power_ratio(ratio: float):
+    # ratio: 0.0~1.0 → duty_u16: 0~65535
     if ratio <= 0.0:
         duty = 0
     elif ratio >= 1.0:
@@ -161,9 +128,7 @@ def stop_all():
     IN1.value(0); IN2.value(0)
     IN3.value(0); IN4.value(0)
 
-# =========================================================
-# 진동 패턴 상태(FSM, 논블로킹)
-# =========================================================
+# ====== 진동 패턴 상태(FSM, 논블로킹) ======
 _state = {
     "active": False,
     "end_ms": 0,
@@ -185,7 +150,7 @@ def start_fire_alert(duration_ms=10000, on_ms=400, off_ms=200, intensity=0.85):
         "end_ms": time.ticks_add(now, int(duration_ms)),
         "on_ms": int(on_ms),
         "off_ms": int(off_ms),
-        "next_toggle_ms": now,
+        "next_toggle_ms": now,   # 즉시 토글 시도
         "vibrating": False,
         "intensity": max(0.0, min(1.0, float(intensity))),
     })
@@ -197,27 +162,26 @@ def stop_pattern():
 def pattern_tick():
     if not _state["active"]:
         return
-
     now = ticks_ms()
-
+    # 종료 시각 도달
     if time.ticks_diff(_state["end_ms"], now) <= 0:
         stop_pattern()
         return
-
+    # 토글 타이밍 도달?
     if time.ticks_diff(now, _state["next_toggle_ms"]) >= 0:
         if _state["vibrating"]:
+            # turn OFF
             set_power_ratio(0.0)
             _state["vibrating"] = False
             _state["next_toggle_ms"] = time.ticks_add(now, _state["off_ms"])
         else:
+            # turn ON
             set_motor_forward()
             set_power_ratio(_state["intensity"])
             _state["vibrating"] = True
             _state["next_toggle_ms"] = time.ticks_add(now, _state["on_ms"])
 
-# =========================================================
-# wifi_config.json 유틸
-# =========================================================
+# ====== wifi_config.json 유틸 ======
 def load_wifi_config():
     if CONFIG_PATH not in os.listdir():
         return None
@@ -246,11 +210,11 @@ def url_decode(s):
         c = s[i]
         if c == '+':
             res += ' '
-        elif c == '%' and i + 2 < len(s):
+        elif c == '%' and i+2 < len(s):
             try:
                 res += chr(int(s[i+1:i+3], 16))
                 i += 2
-            except Exception:
+            except:
                 res += c
         else:
             res += c
@@ -266,151 +230,103 @@ def parse_form(body):
             out[k] = url_decode(v)
     return out
 
-# =========================================================
-# Wi-Fi / MQTT
-# =========================================================
+# ====== Wi-Fi / MQTT ======
 wlan   = None
 client = None
 
-def radio_reset():
+def try_connect_wifi(ssid, pw):
+    """
+    주어진 SSID/PW로 Wi-Fi 연결 시도.
+    성공 시 True, 실패 시 False.
+    """
     global wlan
-
-    try:
-        ap = network.WLAN(network.AP_IF)
-        ap.active(False)
-    except Exception:
-        pass
-
-    if wlan is None:
-        wlan = network.WLAN(network.STA_IF)
-
-    try:
-        wlan.disconnect()
-    except Exception:
-        pass
-
-    try:
-        wlan.active(False)
-    except Exception:
-        pass
-
-    time.sleep_ms(300)
-
-    try:
-        wlan.active(True)
-    except Exception:
-        pass
-
-    time.sleep_ms(500)
-
-def wifi_is_connected():
-    global wlan
-    return wlan is not None and wlan.active() and wlan.isconnected()
-
-def try_connect_wifi(ssid, pw, force_reset=True):
-    global wlan
-
     if not ssid or not pw:
         print("⚠️ SSID 또는 PW 없음, 연결 시도 생략")
         return False
 
-    if force_reset:
-        radio_reset()
+    if wlan is None:
+        wlan = network.WLAN(network.STA_IF)
+        wlan.active(True)
     else:
-        if wlan is None:
-            wlan = network.WLAN(network.STA_IF)
-            wlan.active(True)
+        wlan.active(True)
 
-    if wifi_is_connected():
+    if wlan.isconnected():
         print("✅ 이미 Wi-Fi 연결 상태:", wlan.ifconfig())
         return True
 
     print("📡 Wi-Fi 연결 시도:", ssid)
-    try:
-        wlan.connect(ssid, pw)
-    except Exception as e:
-        print("❌ wlan.connect 실패:", e)
-        return False
+    wlan.connect(ssid, pw)
 
     attempt = 0
     while not wlan.isconnected() and attempt < WIFI_RETRY_MAX:
         attempt += 1
-        time.sleep_ms(WIFI_RETRY_WAIT_MS)
+        time.sleep(0.5)
 
     if not wlan.isconnected():
-        try:
-            st = wlan.status()
-        except Exception:
-            st = "unknown"
-        print("❌ Wi-Fi 연결 실패 (status=%s)" % str(st))
+        print("❌ Wi-Fi 연결 실패 (재시도 %d회 초과)" % WIFI_RETRY_MAX)
         return False
 
     print("✅ Wi-Fi 연결 완료:", wlan.ifconfig())
-    led_blink(3, 80, 80)   # Wi-Fi 성공
     return True
 
-def connect_wifi_from_config(force_reset=True):
+def connect_wifi_from_config():
+    """
+    1) wifi_config.json 있으면 → 그 SSID/PW로 접속 + MQTT_BROKER 설정
+    2) 없거나 실패 → 코드 상의 WIFI_SSID/WIFI_PASSWORD로 한 번 더 시도
+    """
     global MQTT_BROKER
 
     cfg = load_wifi_config()
     if cfg:
         ssid = cfg.get("ssid")
         pw   = cfg.get("password")
-        broker = cfg.get("broker") or DEFAULT_BROKER_IP
-
         if ssid and pw:
-            MQTT_BROKER = broker
-            if try_connect_wifi(ssid, pw, force_reset=force_reset):
+            if try_connect_wifi(ssid, pw):
+                broker = cfg.get("broker")
+                MQTT_BROKER = broker or DEFAULT_BROKER_IP
                 print("🌐 config로 Wi-Fi 연결 OK, broker =", MQTT_BROKER)
                 return True
 
+    # fallback: 코드 안에 박아둔 기본 SSID
     if WIFI_SSID and WIFI_PASSWORD:
-        MQTT_BROKER = DEFAULT_BROKER_IP
         print("⚠️ config 없음/실패 → 기본 SSID 시도:", WIFI_SSID)
-        if try_connect_wifi(WIFI_SSID, WIFI_PASSWORD, force_reset=force_reset):
+        if try_connect_wifi(WIFI_SSID, WIFI_PASSWORD):
+            MQTT_BROKER = DEFAULT_BROKER_IP
             print("🌐 기본 설정으로 연결, broker =", MQTT_BROKER)
             return True
 
     return False
 
 def wifi_connect():
-    return connect_wifi_from_config(force_reset=False)
+    """
+    기존 wifi_connect()를 config 기반으로 재구현.
+    """
+    return connect_wifi_from_config()
 
 def wifi_ensure():
-    if wifi_is_connected():
-        return True
-    return connect_wifi_from_config(force_reset=True)
-
-def probe_broker(ip, port=1883, timeout_s=2):
-    s = None
-    try:
-        addr = socket.getaddrinfo(ip, port)[0][-1]
-        s = socket.socket()
-        s.settimeout(timeout_s)
-        s.connect(addr)
-        return True
-    except Exception as e:
-        print("⚠️ broker reachability check 실패:", e)
-        return False
-    finally:
-        try:
-            if s:
-                s.close()
-        except Exception:
-            pass
+    """
+    Wi-Fi가 끊겨 있으면 다시 붙여보기.
+    (재연결 시에는 AP 포털로 가지 않고, 저장된 config/기본 SSID만 사용)
+    """
+    if not wifi_connect():
+        print("⚠️ Wi-Fi 미연결 상태, 나중에 다시 시도")
 
 def start_config_portal():
+    """
+    설정용 AP를 열고, 폼에서 SSID/PW/Broker를 입력받아 저장 후 리부트.
+    (다른 센서들과 동일 구조)
+    """
+    # STA 끄고 AP 켜기
     sta = network.WLAN(network.STA_IF)
     sta.active(False)
 
     ap = network.WLAN(network.AP_IF)
     ap.config(essid=AP_SSID, password=AP_PW)
     ap.active(True)
-
     print("📶 AP 모드 시작:", ap.ifconfig())
     print("➡ 폰에서", AP_SSID, "접속 후 브라우저에서 http://192.168.4.1 열기")
 
-    addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
+    addr = socket.getaddrinfo('0.0.0.0', 80)[0][-1]
     s = socket.socket()
     try:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -432,41 +348,41 @@ def start_config_portal():
             parts = req_str.split("\r\n\r\n", 1)
             body = parts[1] if len(parts) > 1 else ""
             form = parse_form(body)
-
             ssid   = form.get("ssid", "").strip()
             pw     = form.get("pw", "").strip()
             broker = form.get("broker", "").strip()
 
             if ssid and pw:
                 save_wifi_config(ssid, pw, broker or None)
-                cl.send(HTML_SAVED.encode())
+                cl.send(HTML_SAVED)
                 cl.close()
                 time.sleep(3)
                 machine.reset()
             else:
-                cl.send(HTML_FORM.encode())
+                cl.send(HTML_FORM)
                 cl.close()
         else:
-            cl.send(HTML_FORM.encode())
+            cl.send(HTML_FORM)
             cl.close()
 
 def startup_wifi_or_portal():
-    if connect_wifi_from_config(force_reset=True):
+    """
+    부팅 시 한 번만 호출:
+    - wifi_config / 기본 SSID로 Wi-Fi 연결을 먼저 시도하고,
+    - 실패하면 AP 포털로 진입해서 사용자 입력을 기다렸다가 재부팅.
+    """
+    if wifi_connect():
         return True
-
     print("⚠️ Wi-Fi 접속 실패 → 설정용 AP 모드 진입")
     start_config_portal()
     return False
 
-# =========================================================
-# MQTT 관련
-# =========================================================
+# ====== MQTT 관련 ======
 def on_msg(topic, msg):
-    led_blink(1, 40, 40)   # 명령 수신 표시
-
     try:
         s = msg.decode() if isinstance(msg, (bytes, bytearray)) else str(msg)
-        payload = ujson.loads(s) if s and s[0] in "{[" else {}
+        import ujson as json
+        payload = json.loads(s) if s and s[0] in "{[" else {}
     except Exception as e:
         print("JSON parse error:", e, msg)
         return
@@ -474,17 +390,18 @@ def on_msg(topic, msg):
     cmd = str(payload.get("command", "")).strip()
 
     if cmd == "vibrate_fire_alert":
-        dur   = int(payload.get("duration_ms", 10000))
-        on_ms = int(payload.get("on_ms", 400))
-        off_ms = int(payload.get("off_ms", 200))
+        dur = int(payload.get("duration_ms", 10000))
+        on  = int(payload.get("on_ms", 400))
+        off = int(payload.get("off_ms", 200))
         inten = float(payload.get("intensity", 0.85))
-        print("[VIB] fire_alert start:", dur, on_ms, off_ms, inten)
-        start_fire_alert(dur, on_ms, off_ms, inten)
+        print("[VIB] fire_alert start:", dur, on, off, inten)
+        start_fire_alert(dur, on, off, inten)
 
     elif cmd == "vibrate_once":
         ms = int(payload.get("ms", 800))
         inten = float(payload.get("intensity", 0.8))
         print("[VIB] once:", ms, inten)
+        # 한 번 켰다가 자연 종료 (off 구간을 매우 길게)
         start_fire_alert(ms, ms, 9999999, inten)
 
     elif cmd == "vibrate_stop":
@@ -496,77 +413,69 @@ def on_msg(topic, msg):
 
 def mqtt_connect_and_sub():
     global client
-
-    if not probe_broker(MQTT_BROKER, PORT, BROKER_PROBE_TIMEOUT_S):
-        raise OSError("broker unreachable: %s:%d" % (MQTT_BROKER, PORT))
-
     c = MQTTClient(CLIENT_ID, MQTT_BROKER, port=PORT, keepalive=KEEPALIVE)
     c.set_callback(on_msg)
     c.connect()
-
     for t in SUB_TOPICS:
         c.subscribe(t, qos=1)
         print("SUB:", t)
-
     client = c
     return c
 
-# =========================================================
-# 메인 루프
-# =========================================================
+# ====== 메인 루프 ======
 def main():
     global client
 
-    stop_all()   # 부팅 직후 모터 완전 OFF
-    led_off()
-    led_blink(2, 100, 100)   # 부팅 시작
+    stop_all()  # 안전 초기화
 
-    # 외부전원 단독 부팅 안정화 대기
-    time.sleep_ms(BOOT_SETTLE_MS)
-
-    # Wi-Fi 연결 또는 AP 포털
+    # 1) 부팅 시: Wi-Fi / MQTT 브로커 설정 or AP 포털
     startup_wifi_or_portal()
 
     last_ping = ticks_ms()
 
     while True:
         try:
-            if not wifi_ensure():
-                stop_pattern()
-                client = None
-                time.sleep_ms(RECONNECT_DELAY_MS)
+            # 1) Wi-Fi가 안 붙어 있으면 계속 재시도 (AP 포털로는 가지 않음)
+            if not wifi_connect():
+                time.sleep(2)
                 continue
 
+            # 2) MQTT 클라이언트 없으면 새로 연결
             if client is None:
-                print("📡 MQTT 연결 시도:", MQTT_BROKER)
                 client = mqtt_connect_and_sub()
-                print("✅ MQTT 연결 완료. broker =", MQTT_BROKER)
-                led_blink(5, 80, 80)   # MQTT 성공
+                print("MQTT: connected. broker =", MQTT_BROKER)
                 last_ping = ticks_ms()
 
+            # 3) 수신 처리(논블로킹)
             client.check_msg()
+
+            # 4) 진동 패턴 갱신
             pattern_tick()
 
+            # 5) ping 유지 (KEEPALIVE/2 주기)
             if time.ticks_diff(ticks_ms(), last_ping) > (KEEPALIVE * 500):
-                client.ping()
+                try:
+                    client.ping()
+                except Exception as e:
+                    print("ping err:", e)
+                    # 에러 나면 아래 except 블록으로 가서 재연결
+                    raise e
                 last_ping = ticks_ms()
 
-            time.sleep_ms(MAIN_LOOP_SLEEP_MS)
+            time.sleep_ms(5)
 
         except Exception as e:
             print("MQTT loop err:", e)
             try:
                 if client:
                     client.disconnect()
-            except Exception:
+            except:
                 pass
             client = None
             stop_pattern()
-            led_blink(1, 200, 200)   # 에러/재시도 표시
-            time.sleep_ms(RECONNECT_DELAY_MS)
+            time.sleep(2000)
 
 try:
     main()
 except KeyboardInterrupt:
     stop_all()
-    led_off()
