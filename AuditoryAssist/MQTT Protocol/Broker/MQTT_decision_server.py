@@ -1,7 +1,8 @@
 # MQTT_decision_server.py
-import json, time, socket, datetime
+import json, time, socket, datetime, os
 from collections import defaultdict, deque
 import paho.mqtt.client as mqtt
+import threading  # ★ UDP discovery용 쓰레드
 
 from handler_registry import HANDLER_NAME_MAP
 import handlers
@@ -10,9 +11,15 @@ _ = handlers.__name__  # ensure handlers loaded
 from firebase.firebase_utils import save_fcm_token
 
 # ── Broker / Topics ──────────────────────────────────────────────────────
-BROKER_IP   = "192.168.0.24"
+# ✅ 핵심 수정:
+# - 브로커(mosquitto)가 "같은 라즈베리파이"에서 돌면, IP가 바뀌어도 영향 없게 로컬로 붙는다.
+# - 필요하면 실행 환경에서 MQTT_BROKER_IP로 덮어쓰기 가능.
+BROKER_IP   = os.getenv("MQTT_BROKER_IP", "127.0.0.1")
 BROKER_PORT = 1883
 KEEPALIVE   = 30
+
+# UDP Discovery
+DISCOVERY_PORT = 30303  # ★ 스마트폰이 브로커 IP를 찾을 때 사용할 포트
 
 CONTROL_TOPIC   = "decision/control"
 APP_NEOPIXEL    = "interfaceui/commands/mood"
@@ -28,7 +35,7 @@ LOG_HISTORY_PREFIX = "interfaceui/logs/history"
 
 # Devices
 VIBRATOR_TOPIC_PREFIX = "vibrator"   # vibrator/Vibrator_1
-BEACON_TOPIC_PREFIX   = "beacon"     # ✅ beacon/Beacon_1  (신규)
+BEACON_TOPIC_PREFIX   = "beacon"     # beacon/Beacon_1
 
 VERBOSE_PUBLISH_LOG = False
 
@@ -46,6 +53,10 @@ MQTT_event_status = {
 
 # ── Runtime context ──────────────────────────────────────────────────────
 def _get_local_ip():
+    """
+    현재 라우팅 기준 로컬 IP를 얻는다.
+    (인터넷이 없어도 기본 게이트웨이 라우팅이 있으면 보통 정상 동작)
+    """
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -58,12 +69,58 @@ def _get_local_ip():
 userdata = {
     "devices": ["Neopixel_1", "Neopixel_2"],
     "vib_devices": ["Vibrator_1"],
-    "beacon_devices": ["Beacon_1"],     # ✅ 경광등 장치 목록
+    "beacon_devices": ["Beacon_1"],
     "default_command": "fire_confirmed",
     "sensor_status": MQTT_event_status,
     "just_triggered": False,
     "server_ip": _get_local_ip(),
 }
+
+def _refresh_server_ip() -> str:
+    """
+    ✅ 핵심 수정:
+    - Wi-Fi/장소 변경으로 IP가 바뀔 수 있으므로,
+      HELLO/Discovery 응답 직전에 최신 IP로 갱신한다.
+    """
+    ip = _get_local_ip()
+    if ip:
+        userdata["server_ip"] = ip
+    return userdata.get("server_ip", "") or ""
+
+# ── UDP Discovery 서버 ───────────────────────────────────────────────────
+def _discovery_loop():
+    """
+    같은 Wi-Fi 안에서 'MQTT_DISCOVER' UDP를 받으면
+    {"ip": "...", "port": 1883} JSON으로 응답한다.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    sock.bind(("0.0.0.0", DISCOVERY_PORT))
+
+    print(f"🔎 MQTT 브로커 discovery 서버 대기 중... (UDP {DISCOVERY_PORT})")
+
+    while True:
+        try:
+            data, addr = sock.recvfrom(1024)
+            msg = data.strip()
+            if msg == b"MQTT_DISCOVER":
+                # ✅ 최신 IP로 갱신 후 응답
+                ip = _refresh_server_ip()
+                if not ip:
+                    print("⚠️ discovery 요청 받았지만 IP 없음")
+                    continue
+                resp = json.dumps({"ip": ip, "port": BROKER_PORT}).encode()
+                sock.sendto(resp, addr)
+                print(f"📤 브로커 정보 응답: {addr} → {resp}")
+        except Exception as e:
+            print("❌ discovery loop error:", e)
+            time.sleep(1.0)
+
+def start_discovery_server():
+    """백그라운드 쓰레드에서 discovery loop 실행"""
+    t = threading.Thread(target=_discovery_loop, daemon=True)
+    t.start()
 
 # ── Time helpers ─────────────────────────────────────────────────────────
 def _now_ts_ms() -> int:
@@ -83,9 +140,11 @@ def _status_payload(online: bool) -> str:
     })
 
 def _hello_payload() -> str:
+    # ✅ 최신 IP로 갱신해서 hello에 반영
+    ip = _refresh_server_ip()
     return json.dumps({
         "id": "server", "name": "중앙 관리 서버", "type": "server",
-        "ip": userdata.get("server_ip", ""),
+        "ip": ip,
         "ts": int(time.time()),
         "ts_ms": _now_ts_ms(),
         "iso": _now_iso(),
@@ -112,13 +171,14 @@ def log_publish(client, *, typ: str, id_: str, level: str, msg: str, **extra):
         "id": id_, "type": typ, "level": level, "msg": msg,
         "ts": int(time.time()), "ts_ms": _now_ts_ms(), "iso": _now_iso(),
     }
-    if extra: rec.update(extra)
+    if extra:
+        rec.update(extra)
     topic = f"{LOG_STREAM_PREFIX}/{typ}/{id_}"
     client.publish(topic, json.dumps(rec), qos=0, retain=False)
     ring[_log_key(typ, id_)].append(rec)
     try:
         extra_view = {k: v for k, v in rec.items()
-                    if k not in ("type","id","level","msg","ts","ts_ms","iso")}
+                      if k not in ("type","id","level","msg","ts","ts_ms","iso")}
         print(f"[srvlog][{level}] {msg} → {topic} {json.dumps(extra_view)}")
     except Exception:
         pass
@@ -152,7 +212,7 @@ def publish_vibrate_stop(client, context):
         log_publish(client, typ="server", id_="server", level="debug",
                     msg="vibrator stop sent", target=dev)
 
-# ── Beacon publishers (신규) ─────────────────────────────────────────────
+# ── Beacon publishers ─────────────────────────────────────────────
 def publish_beacon_fire_alert(client, context, *, duration_ms=10000, on_ms=250, off_ms=250):
     """ALL-TRUE 시 경광등 점멸 10초"""
     beacons = context.get("beacon_devices") or ["Beacon_1"]
@@ -189,38 +249,55 @@ def all_True_publisher(client, context):
                     msg="ALL-TRUE detected → red_blink 10s + vibrator 10s + beacon 10s",
                     sensor_status=dict(context["sensor_status"]))
         # 1) 네오픽셀: red_blink 10s
-        cmd = {"command": context["default_command"], "sensor_id": "all_true", "alert": True, "issuer": "decision_server"}
+        cmd = {
+            "command": context["default_command"],
+            "sensor_id": "all_true",
+            "alert": True,
+            "issuer": "decision_server"
+        }
         for dev in (context.get("devices") or ["Neopixel_1"]):
             client.publish(f"neopixel/{dev}", json.dumps(cmd), qos=1, retain=False)
             log_publish(client, typ="server", id_="server", level="debug",
-                        msg="command sent to device", target=dev, command=context["default_command"])
+                        msg="command sent to device", target=dev,
+                        command=context["default_command"])
         # 2) 진동 디바이스 10s
-        publish_vibrate_fire_alert(client, context, duration_ms=10000, on_ms=400, off_ms=200, intensity=0.85)
-        # 3) ✅ 경광등 10s 점멸
-        publish_beacon_fire_alert(client, context, duration_ms=10000, on_ms=250, off_ms=250)
+        publish_vibrate_fire_alert(client, context,
+                                   duration_ms=10000, on_ms=400, off_ms=200, intensity=0.85)
+        # 3) 경광등 10s 점멸
+        publish_beacon_fire_alert(client, context,
+                                  duration_ms=10000, on_ms=250, off_ms=250)
 
         # reset snapshot
         for k in context["sensor_status"]:
             context["sensor_status"][k] = False
         context["just_triggered"] = False
         log_publish(client, typ="server", id_="server", level="debug",
-                    msg="ALL-TRUE flags reset", sensor_status=dict(context["sensor_status"]))
+                    msg="ALL-TRUE flags reset",
+                    sensor_status=dict(context["sensor_status"]))
 
 # ── App → Neopixel forwarding ────────────────────────────────────────────
 def forward_mood_to_neopixel(client, raw: dict, context):
     try:
         if raw.get("command") != "set_mood":
-            print("❌ not set_mood:", raw); return
+            print("❌ not set_mood:", raw)
+            return
         hex_color = str(raw.get("color", "#FFFFFF")).strip().upper()
         if not (hex_color.startswith("#") and len(hex_color) == 7):
-            print("❌ bad color:", hex_color); return
+            print("❌ bad color:", hex_color)
+            return
         brightness = int(raw.get("brightness", 255))
         if not (0 <= brightness <= 255):
-            print("❌ bad brightness:", brightness); return
+            print("❌ bad brightness:", brightness)
+            return
 
         target = raw.get("target")
         targets = [target] if target else (context.get("devices") or ["Neopixel_1"])
-        payload = {"command": "set_mood", "color": hex_color, "brightness": brightness, "issuer": "decision_server"}
+        payload = {
+            "command": "set_mood",
+            "color": hex_color,
+            "brightness": brightness,
+            "issuer": "decision_server"
+        }
         for dev in targets:
             topic = f"neopixel/{dev}"
             client.publish(topic, json.dumps(payload), qos=1, retain=False)
@@ -231,9 +308,9 @@ def forward_mood_to_neopixel(client, raw: dict, context):
     except Exception as e:
         print("❌ forward error:", e)
         log_publish(client, typ="server", id_="server",
-                    level="error", msg="mood forward error", error=str(e))
+                    msg="mood forward error", level="error", error=str(e))
 
-# ── History handler (생략 없이 유지) ─────────────────────────────────────
+# ── History handler ──────────────────────────────────────────────────────
 def handle_history_request(client, payload: dict):
     req_id   = str(payload.get("id") or "server")
     req_type = str(payload.get("type") or ("server" if req_id == "server" else "subscriber"))
@@ -248,7 +325,9 @@ def handle_history_request(client, payload: dict):
 
     resp_topic = f"{LOG_HISTORY_PREFIX}/{req_type}/{req_id}"
     print(f"📤 history resp → {resp_topic} ({len(items)} items)")
-    client.publish(resp_topic, json.dumps({"id": req_id, "type": req_type, "items": items}), qos=0, retain=False)
+    client.publish(resp_topic,
+                   json.dumps({"id": req_id, "type": req_type, "items": items}),
+                   qos=0, retain=False)
 
     log_publish(client, typ="server", id_="server", level="debug",
                 msg="history served", target=req_id, target_type=req_type,
@@ -264,14 +343,17 @@ def on_message(client, context, msg):
         if not topic.startswith(f"{LOG_STREAM_PREFIX}/") and not topic.startswith(f"{LOG_HISTORY_PREFIX}/"):
             preview = raw if isinstance(raw, str) else str(payload)
             log_publish(client, typ="server", id_="server", level="debug",
-                        msg="recv", topic=topic, payload=(preview[:200] if preview else ""))
+                        msg="recv", topic=topic,
+                        payload=(preview[:200] if preview else ""))
 
+        # 로그 스트림 자체는 ring에만 쌓고 리턴
         if topic.startswith(f"{LOG_STREAM_PREFIX}/"):
             parts = topic.split("/", 4)
             if len(parts) >= 4:
                 typ, id_ = parts[2], parts[3]
                 rec = payload if isinstance(payload, dict) else {"msg": payload}
-                rec.setdefault("id", id_); rec.setdefault("type", typ)
+                rec.setdefault("id", id_)
+                rec.setdefault("type", typ)
                 rec.setdefault("level", "info")
                 rec.setdefault("ts", int(time.time()))
                 rec.setdefault("ts_ms", _now_ts_ms())
@@ -280,14 +362,18 @@ def on_message(client, context, msg):
             return
 
         if topic == APP_NEOPIXEL:
-            forward_mood_to_neopixel(client, payload, context); return
+            forward_mood_to_neopixel(client, payload, context)
+            return
 
         if topic == REG_REQUEST:
             publish_server_hello(client)
-            log_publish(client, typ="server", id_="server", level="debug", msg="hello re-published"); return
+            log_publish(client, typ="server", id_="server",
+                        level="debug", msg="hello re-published")
+            return
 
         if topic == LOG_HISTORY_REQ:
-            handle_history_request(client, payload); return
+            handle_history_request(client, payload)
+            return
 
         if topic == PUSH_REGISTER:
             token = None
@@ -299,6 +385,7 @@ def on_message(client, context, msg):
                     token = raw_s.strip()
             except Exception:
                 token = None
+
             if token:
                 try:
                     save_fcm_token(token)
@@ -320,21 +407,25 @@ def on_message(client, context, msg):
                 context["sensor_status"][k] = False
             context["just_triggered"] = False
             publish_vibrate_stop(client, context)
-            publish_beacon_stop(client, context)   # ✅ 리셋 시 경광등도 강제 OFF
-            log_publish(client, typ="server", id_="server", level="info", msg="sensor_status reset")
+            publish_beacon_stop(client, context)
+            log_publish(client, typ="server", id_="server", level="info",
+                        msg="sensor_status reset")
             return
 
         cfg = config.get(topic)
         if not cfg:
             print("❗unregistered topic:", topic)
-            log_publish(client, typ="server", id_="server", level="warn", msg="unregistered topic", topic=topic)
+            log_publish(client, typ="server", id_="server", level="warn",
+                        msg="unregistered topic", topic=topic)
             return
 
         if payload.get("sensor_id") != cfg["sensor_id"] or payload.get("event") != cfg["expected_event"]:
             print("❌ unexpected sensor payload:", payload)
             log_publish(client, typ="server", id_="server", level="debug",
                         msg="unexpected sensor event",
-                        got=payload, expect={"sensor_id":cfg["sensor_id"], "event":cfg["expected_event"]})
+                        got=payload,
+                        expect={"sensor_id": cfg["sensor_id"],
+                                "event": cfg["expected_event"]})
             return
 
         log_publish(client, typ="server", id_="server", level="info",
@@ -345,7 +436,8 @@ def on_message(client, context, msg):
         handler = HANDLER_NAME_MAP.get(cfg["handler"])
         if not handler:
             print("❗no handler:", cfg["handler"])
-            log_publish(client, typ="server", id_="server", level="error", msg="missing handler", handler=cfg["handler"])
+            log_publish(client, typ="server", id_="server", level="error",
+                        msg="missing handler", handler=cfg["handler"])
             return
 
         handler(payload, client, context)
@@ -366,23 +458,26 @@ def on_connect(client, context, flags, rc, _=None):
     publish_server_status(client, True)
     publish_server_hello(client)
     log_publish(client, typ="server", id_="server", level="info",
-                msg="server connected", ip=userdata.get("server_ip",""))
+                msg="server connected", ip=userdata.get("server_ip", ""))
 
     for t in MQTT_TOPICS:
-        client.subscribe(t, qos=1); print(f"📶 구독: {t}")
+        client.subscribe(t, qos=1)
+        print(f"📶 구독: {t}")
 
     client.subscribe(CONTROL_TOPIC,   qos=1); print(f"📶 구독: {CONTROL_TOPIC}")
     client.subscribe(APP_NEOPIXEL,    qos=1); print(f"📶 구독: {APP_NEOPIXEL}")
     client.subscribe(REG_REQUEST,     qos=1); print(f"📶 구독: {REG_REQUEST}")
     client.subscribe(LOG_HISTORY_REQ, qos=1); print(f"📶 구독: {LOG_HISTORY_REQ}")
     client.subscribe(PUSH_REGISTER,   qos=1); print(f"📶 구독: {PUSH_REGISTER}")
-    client.subscribe(f"{LOG_STREAM_PREFIX}/+/+", qos=0); print(f"📶 구독: {LOG_STREAM_PREFIX}/+/+")
+    client.subscribe(f"{LOG_STREAM_PREFIX}/+/+", qos=0)
+    print(f"📶 구독: {LOG_STREAM_PREFIX}/+/+")
 
     print("✅ MQTT 연결 완료")
     log_publish(client, typ="server", id_="server", level="debug",
                 msg="subscriptions ready", sensor_topics=len(MQTT_TOPICS))
 
     orig_publish = client.publish
+
     def _pub_wrap(topic, payload=None, qos=0, retain=False):
         try:
             t = str(topic)
@@ -397,11 +492,18 @@ def on_connect(client, context, flags, rc, _=None):
         except Exception:
             pass
         return orig_publish(topic, payload, qos, retain)
+
     client.publish = _pub_wrap
 
 def loop():
+    # ★ 브로커 디스커버리 서버를 한 번만 시작
+    start_discovery_server()
+
     while True:
         try:
+            # ✅ 연결 시도 직전에 최신 IP로 갱신 (hello/discovery/로그에 일관 반영)
+            _refresh_server_ip()
+
             client = mqtt.Client(client_id="decision_server", userdata=userdata)
             client.will_set(STATUS_SERVER, _status_payload(False), qos=1, retain=True)
             client.on_connect = lambda c, u, f, rc: on_connect(c, u, f, rc)
@@ -411,16 +513,18 @@ def loop():
             client.connect(BROKER_IP, BROKER_PORT, keepalive=KEEPALIVE)
             print("🚀 판단 서버 실행 중")
 
-            last_hello   = time.time()
-            last_hb_log  = time.time()
+            last_hello  = time.time()
+            last_hb_log = time.time()
 
             while True:
                 client.loop(timeout=1.0)
                 now = time.time()
                 if now - last_hello >= 60:
-                    publish_server_hello(client); last_hello = now
+                    publish_server_hello(client)
+                    last_hello = now
                 if now - last_hb_log >= 60:
-                    log_publish(client, typ="server", id_="server", level="debug", msg="heartbeat")
+                    log_publish(client, typ="server", id_="server",
+                                level="debug", msg="heartbeat")
                     last_hb_log = now
 
         except Exception as e:
