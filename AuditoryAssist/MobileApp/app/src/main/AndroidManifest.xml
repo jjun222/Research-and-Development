@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:name=".App"
@@ -38,13 +39,14 @@
             android:exported="false" />
 
         <!-- 기존 화면들 -->
-        <activity android:name=".ui1.SituationStatusActivity" android:exported="false" />
+        <activity android:name=".ui1.SituationStatusActivity"  android:exported="false" />
         <activity android:name=".ui1.DeviceSelectActivity"     android:exported="false" />
         <activity android:name=".ui1.SettingActivity"          android:exported="false" />
         <activity android:name=".ui1.CheckActivity"            android:exported="false" />
         <activity android:name=".ui1.LogActivity"              android:exported="false" />
         <activity android:name=".ui1.NotificationActivity"     android:exported="false" />
         <activity android:name=".ui1.LogHistoryActivity"       android:exported="false" />
+        <activity android:name=".WifiSettingsActivity"         android:exported="false"/>
 
         <!-- FCM 수신 서비스 -->
         <service
