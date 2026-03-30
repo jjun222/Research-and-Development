@@ -22,11 +22,15 @@ WIFI_PASSWORD = ""
 CONFIG_PATH        = "wifi_config.json"
 DEFAULT_BROKER_IP  = "192.168.0.33"
 
+# ========= MQTT 정보 =========
 MQTT_BROKER    = DEFAULT_BROKER_IP
-MQTT_TOPIC     = "gas/sensor"
+MQTT_TOPIC     = "gas/sensor"   # 기존 이벤트 토픽(그대로 유지)
 MQTT_CLIENT_ID = "gas_sensor_pico"
 
-# 동작 파라미터
+# ✅ 추가: 상태 모니터링용 토픽
+STATUS_TOPIC   = "interfaceui/status/publisher/" + MQTT_CLIENT_ID
+
+# ========= 동작 파라미터 =========
 KEEPALIVE_SEC      = 60
 PING_INTERVAL_MS   = 30_000
 LED_BLINK_MS       = 500
@@ -47,6 +51,9 @@ THRESHOLD_LOW      = 28_000
 
 # [4] heartbeat
 HEARTBEAT_MS       = 10_000
+
+# ✅ 추가: status 주기
+STATUS_INTERVAL_MS = 10_000
 
 # [7] 센서 이상값
 FAULT_MIN_VALID    = 50
@@ -115,6 +122,15 @@ def blink_once(on_ms=80, off_ms=80):
 def blink_n(n, on_ms=80, off_ms=80):
     for _ in range(n):
         blink_once(on_ms, off_ms)
+
+def get_ip():
+    global wlan
+    try:
+        if wlan is not None and wlan.isconnected():
+            return wlan.ifconfig()[0]
+    except Exception:
+        pass
+    return ""
 
 def load_wifi_config():
     if CONFIG_PATH not in os.listdir():
@@ -300,6 +316,9 @@ def mqtt_connect():
         client.connect()
         print("✅ MQTT 연결 완료 (broker =", MQTT_BROKER, ")")
         blink_n(5)
+
+        # ✅ MQTT 연결 직후 바로 status 1회
+        publish_device_status(state="online", value=None, reason="mqtt_connected")
         return True
     except Exception as e:
         print("❌ MQTT 연결 실패:", e)
@@ -397,6 +416,23 @@ def publish_json(topic, obj):
 
     return False
 
+# ✅ 추가: Node-RED 상태 모니터링용 payload 생성/발행
+def publish_device_status(state="normal", value=None, reason="heartbeat"):
+    payload = {
+        "id": MQTT_CLIENT_ID,
+        "type": "publisher",
+        "device_type": "gas_sensor",
+        "online": True,
+        "wifi": (wlan is not None and wlan.isconnected()),
+        "mqtt": (client is not None),
+        "ip": get_ip(),               # 실시간 IP
+        "state": state,               # online / warming_up / normal / alarm / fault
+        "value": value,               # 실시간 값
+        "reason": reason,             # mqtt_connected / heartbeat / state_change / fault
+        "ts": now_str()               # 실시간 시각
+    }
+    publish_json(STATUS_TOPIC, payload)
+
 def send_status(value, is_fire, reason="heartbeat", raw_value=None, median_value=None):
     payload = {
         "sensor_id": MQTT_CLIENT_ID,
@@ -459,6 +495,7 @@ def main():
     t_last_report = time.ticks_ms()
     t_last_warmup_log = time.ticks_ms()
     t_last_fault_log = time.ticks_ms()
+    t_last_status = time.ticks_ms()   # ✅ 추가
 
     led_state = False
     current_fire_state = None
@@ -489,6 +526,7 @@ def main():
 
             t_ping = now
 
+        # 예열 단계
         if time.ticks_diff(now, boot_ms) < WARMUP_MS:
             if time.ticks_diff(now, t_led) >= WARMUP_LED_MS:
                 led_state = not led_state
@@ -500,6 +538,11 @@ def main():
                 print("⏳ 예열 중... 남은 시간:", remain, "초")
                 t_last_warmup_log = now
 
+            # ✅ 예열 중 status
+            if time.ticks_diff(now, t_last_status) >= STATUS_INTERVAL_MS:
+                publish_device_status(state="warming_up", value=None, reason="heartbeat")
+                t_last_status = now
+
             time.sleep(0.05)
             continue
 
@@ -510,6 +553,7 @@ def main():
 
         raw_value, median_value, gas_value = read_filtered_adc()
 
+        # 센서 이상값 처리
         if gas_value <= FAULT_MIN_VALID or gas_value >= FAULT_MAX_VALID:
             fault_bad_count += 1
             fault_good_count = 0
@@ -530,9 +574,15 @@ def main():
                 print("⚠️ 센서 이상 상태 유지 중...",
                       "(filtered=%d, raw=%d, median=%d)" % (gas_value, raw_value, median_value))
                 t_last_fault_log = now
+
+            if time.ticks_diff(now, t_last_status) >= STATUS_INTERVAL_MS:
+                publish_device_status(state="fault", value=gas_value, reason="heartbeat")
+                t_last_status = now
+
             time.sleep(0.1)
             continue
 
+        # 히스테리시스
         if current_fire_state is None:
             current_fire_state = (gas_value >= THRESHOLD_HIGH)
         else:
@@ -543,13 +593,31 @@ def main():
                 if gas_value >= THRESHOLD_HIGH:
                     current_fire_state = True
 
+        # 상태 변화 즉시 전송
         if last_sent_state is None or current_fire_state != last_sent_state:
             send_status(gas_value, current_fire_state, "state_change", raw_value, median_value)
+            publish_device_status(
+                state="alarm" if current_fire_state else "normal",
+                value=gas_value,
+                reason="state_change"
+            )
             last_sent_state = current_fire_state
             t_last_report = now
+            t_last_status = now
+
+        # heartbeat
         elif time.ticks_diff(now, t_last_report) >= HEARTBEAT_MS:
             send_status(gas_value, current_fire_state, "heartbeat", raw_value, median_value)
             t_last_report = now
+
+        # ✅ status heartbeat
+        if time.ticks_diff(now, t_last_status) >= STATUS_INTERVAL_MS:
+            publish_device_status(
+                state="alarm" if current_fire_state else "normal",
+                value=gas_value,
+                reason="heartbeat"
+            )
+            t_last_status = now
 
         time.sleep(0.1)
 
