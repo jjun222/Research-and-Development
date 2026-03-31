@@ -1,4 +1,3 @@
-#Vibratino Sensor
 import sys, time, ubinascii, machine, socket, os
 try:
     import network
@@ -22,6 +21,7 @@ KEEPALIVE = const(30)
 DEVICE_ID = "Vibrator_1"
 CLIENT_ID = b"PICO_" + ubinascii.hexlify(machine.unique_id())
 SUB_TOPICS = (b"vibrator/%s" % DEVICE_ID.encode(), b"vibrator/broadcast")
+TOPIC_TEST_ACK = "test/ack/vibrator/%s" % DEVICE_ID
 WIFI_RETRY_MAX = const(20)
 WIFI_RETRY_WAIT_MS = const(500)
 BOOT_SETTLE_MS = const(2500)
@@ -240,6 +240,42 @@ def startup_wifi_or_portal():
     if connect_wifi_from_config(True): return True
     start_config_portal(); return False
 
+
+def publish_test_ack(payload):
+    global client
+    try:
+        if not isinstance(payload, dict):
+            return
+        if not payload.get("test_id"):
+            return
+        now_ms = int(time.time() * 1000)
+        t_broker_recv_ms = int(payload.get("t_broker_recv_ms", now_ms))
+        ack = {
+            "test_group": payload.get("test_group", ""),
+            "test_id": payload.get("test_id", ""),
+            "scenario_id": payload.get("scenario_id", ""),
+            "trial_no": payload.get("trial_no", ""),
+            "seq": payload.get("seq", ""),
+            "event": payload.get("event", ""),
+            "priority_class": payload.get("priority_class", ""),
+            "device_id": DEVICE_ID,
+            "source_path": payload.get("source_path", "sensor->broker->vibrator"),
+            "expected_inputs": payload.get("expected_inputs", 1),
+            "received_inputs": payload.get("received_inputs", 1),
+            "expected_devices": payload.get("expected_devices", 1),
+            "activated_devices": 1,
+            "t_sent_ms": payload.get("t_sent_ms", ""),
+            "t_broker_recv_ms": t_broker_recv_ms,
+            "t_broker_publish_ms": payload.get("t_broker_publish_ms", now_ms),
+            "t_sink_recv_ms": now_ms,
+            "e2e_latency_ms": now_ms - t_broker_recv_ms,
+            "status": "received"
+        }
+        if client:
+            client.publish(TOPIC_TEST_ACK, ujson.dumps(ack))
+    except Exception as e:
+        print("⚠️ test ack publish error:", e)
+
 def on_msg(topic, msg):
     led_blink(1,40,40)
     try:
@@ -250,10 +286,13 @@ def on_msg(topic, msg):
     cmd = str(payload.get("command","")).strip()
     if cmd == "vibrate_fire_alert":
         start_fire_alert(int(payload.get("duration_ms",10000)), int(payload.get("on_ms",400)), int(payload.get("off_ms",200)), float(payload.get("intensity",0.85)))
+        publish_test_ack(payload)
     elif cmd == "vibrate_once":
         ms = int(payload.get("ms",800)); inten = float(payload.get("intensity",0.8)); start_fire_alert(ms, ms, 9999999, inten)
+        publish_test_ack(payload)
     elif cmd == "vibrate_stop":
         stop_pattern()
+        publish_test_ack(payload)
     else:
         print("[VIB] unknown cmd:", cmd, payload)
 
