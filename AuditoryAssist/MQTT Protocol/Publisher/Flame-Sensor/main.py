@@ -1,4 +1,3 @@
-#Flame-Sensor
 import machine, time, network, ujson
 import socket, os
 from simple import MQTTClient
@@ -25,6 +24,12 @@ DEFAULT_BROKER_IP  = "192.168.0.33"
 MQTT_BROKER    = DEFAULT_BROKER_IP
 MQTT_TOPIC     = "shz/sensor"
 MQTT_CLIENT_ID = "shz_sensor_pico"
+
+TEST_GROUP  = "SR"
+TEST_ID     = "SR-01C"
+SCENARIO_ID = "shz_to_broker"
+TRIAL_NO    = 1
+SEQ = 0
 
 KEEPALIVE_SEC      = 60
 PING_INTERVAL_MS   = 30_000
@@ -79,6 +84,28 @@ Content-Type: text/html; charset=utf-8\r
 def get_timestamp_string():
     now = time.localtime()
     return "{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}".format(*now)
+
+
+def next_seq():
+    global SEQ
+    SEQ += 1
+    return SEQ
+
+def build_test_fields(priority_class):
+    return {
+        "test_group": TEST_GROUP,
+        "test_id": TEST_ID,
+        "scenario_id": SCENARIO_ID,
+        "trial_no": TRIAL_NO,
+        "seq": next_seq(),
+        "t_sent_ms": int(time.time() * 1000),
+        "priority_class": priority_class,
+        "source_path": "shz_sensor->broker",
+        "expected_inputs": 1,
+        "received_inputs": 1,
+        "expected_devices": 1,
+        "activated_devices": 0
+    }
 
 def set_led(v):
     val = 1 if v else 0
@@ -387,6 +414,7 @@ def send_status(is_detected, reason="heartbeat"):
         "raw_active_low": 0 if is_detected else 1,
         "timestamp": get_timestamp_string()
     }
+    payload.update(build_test_fields("emergency" if is_detected else "routine"))
     print("📤 상태 전송:", payload["value"], "(reason=%s)" % reason)
     blink_once(40, 40)
     publish_json(MQTT_TOPIC, payload)
