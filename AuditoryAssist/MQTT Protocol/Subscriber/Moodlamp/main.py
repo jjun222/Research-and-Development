@@ -25,6 +25,9 @@ TOPIC_HELLO = "interfaceui/registry/hello/%s" % DEVICE_ID
 TOPIC_REQ = "interfaceui/registry/request"
 TOPIC_LOG = "interfaceui/logs/subscriber/%s" % DEVICE_ID
 
+# ✅ 추가: 테스트 ACK 토픽
+TOPIC_TEST_ACK = "test/ack/neopixel/%s" % DEVICE_ID
+
 DEFAULT_MOOD_RGB = (250, 248, 104)
 DEFAULT_BRIGHT = 255
 
@@ -231,6 +234,44 @@ def publish_hello(c):
     except Exception as e:
         print("⚠️ HELLO publish 실패:", e)
 
+# ✅ 추가: 테스트 ACK 발행
+def publish_test_ack(c, payload):
+    try:
+        if not isinstance(payload, dict):
+            return
+        if not payload.get("test_id"):
+            return
+
+        now_ms = int(time.time() * 1000)
+        t_broker_recv_ms = payload.get("t_broker_recv_ms", now_ms)
+        t_broker_publish_ms = payload.get("t_broker_publish_ms", now_ms)
+
+        ack = {
+            "test_group": payload.get("test_group", ""),
+            "test_id": payload.get("test_id", ""),
+            "scenario_id": payload.get("scenario_id", ""),
+            "trial_no": payload.get("trial_no", ""),
+            "seq": payload.get("seq", ""),
+            "event": payload.get("event", ""),
+            "priority_class": payload.get("priority_class", ""),
+            "device_id": DEVICE_ID,
+            "source_path": payload.get("source_path", "sensor->broker->neopixel"),
+            "expected_inputs": payload.get("expected_inputs", 1),
+            "received_inputs": payload.get("received_inputs", 1),
+            "expected_devices": payload.get("expected_devices", 1),
+            "activated_devices": 1,
+            "t_sent_ms": payload.get("t_sent_ms", ""),
+            "t_broker_recv_ms": t_broker_recv_ms,
+            "t_broker_publish_ms": t_broker_publish_ms,
+            "t_sink_recv_ms": now_ms,
+            "e2e_latency_ms": now_ms - int(t_broker_recv_ms),
+            "status": "received"
+        }
+        c.publish(TOPIC_TEST_ACK, json.dumps(ack), qos=0)
+        log("debug", "test ack published", seq=ack["seq"], topic=TOPIC_TEST_ACK)
+    except Exception as e:
+        log("error", "test ack publish error", error=str(e))
+
 def make_client():
     cid = b"pico-" + ubinascii.hexlify(machine.unique_id())
     c = MQTTClient(cid, MQTT_BROKER, port=MQTT_PORT, keepalive=KEEPALIVE)
@@ -267,7 +308,9 @@ def handle_message(c, topic_b, msg_b):
         cmd = (data.get("command") or data.get("text","")).strip()
         sensor_id = data.get("sensor_id")
         if topic == TOPIC_REQ:
-            publish_hello(c); return
+            publish_hello(c)
+            return
+
         if cmd in ("fire_warning", "yellow_flash"):
             if sensor_id == "gas_sensor_pico":
                 cmd = "hex_flash"; data["color"] = data.get("color", "#8300FD"); data["duration_ms"] = data.get("duration_ms", 5000)
@@ -284,6 +327,7 @@ def handle_message(c, topic_b, msg_b):
             brightness = clamp(int(data.get("brightness", DEFAULT_BRIGHT)), 0, 255)
             mood_rgb, mood_bright = hex_to_rgb(hex_color), brightness
             set_all(apply_brightness(mood_rgb, mood_bright))
+            publish_test_ack(c, data)
             return
 
         if cmd == "hex_flash":
@@ -295,6 +339,7 @@ def handle_message(c, topic_b, msg_b):
             flash = apply_brightness(rgb, mood_bright)
             base = apply_brightness(mood_rgb, mood_bright)
             set_all(flash)
+            publish_test_ack(c, data)
             if _sleep_with_token(c, duration_ms/1000.0, token):
                 set_all(base)
             return
@@ -304,6 +349,7 @@ def handle_message(c, topic_b, msg_b):
             name = cmd.replace("_blink_3s","")
             blink = apply_brightness(NAMED.get(name, NAMED["white"]), mood_bright)
             base = apply_brightness(mood_rgb, mood_bright)
+            publish_test_ack(c, data)
             end = time.ticks_add(time.ticks_ms(), 3000)
             on = False
             while time.ticks_diff(end, time.ticks_ms()) > 0 and _is_current(token):
@@ -317,6 +363,7 @@ def handle_message(c, topic_b, msg_b):
             token = _new_effect_token()
             red = apply_brightness(NAMED["red"], mood_bright)
             base = apply_brightness(mood_rgb, mood_bright)
+            publish_test_ack(c, data)
             end = time.ticks_add(time.ticks_ms(), 10000)
             on = False
             while time.ticks_diff(end, time.ticks_ms()) > 0 and _is_current(token):
@@ -327,7 +374,11 @@ def handle_message(c, topic_b, msg_b):
             return
 
         if cmd in ("off","black"):
-            _new_effect_token(); set_all((0,0,0)); return
+            _new_effect_token()
+            set_all((0,0,0))
+            publish_test_ack(c, data)
+            return
+
         log("warn","unknown cmd", cmd=cmd)
     except Exception as e:
         log("error","handle_message error", error=str(e))
