@@ -1,4 +1,3 @@
-#Water-level-Sensor
 import machine, time, network, ujson, socket, os
 from umqtt.simple import MQTTClient
 
@@ -19,6 +18,12 @@ DEFAULT_BROKER_IP = "192.168.0.33"
 MQTT_BROKER = DEFAULT_BROKER_IP
 MQTT_TOPIC = "water_level/sensor"
 MQTT_CLIENTID = "water_level_1"
+
+TEST_GROUP  = "SR"
+TEST_ID     = "SR-01D"
+SCENARIO_ID = "water_to_broker"
+TRIAL_NO    = 1
+SEQ = 0
 
 KEEPALIVE_SEC = 60
 PING_INTERVAL_MS = 30000
@@ -74,6 +79,28 @@ def blink_n(n, on_ms=80, off_ms=80):
 def now_str():
     t = time.localtime()
     return "%04d-%02d-%02d %02d:%02d:%02d" % t[:6]
+
+
+def next_seq():
+    global SEQ
+    SEQ += 1
+    return SEQ
+
+def build_test_fields():
+    return {
+        "test_group": TEST_GROUP,
+        "test_id": TEST_ID,
+        "scenario_id": SCENARIO_ID,
+        "trial_no": TRIAL_NO,
+        "seq": next_seq(),
+        "t_sent_ms": int(time.time() * 1000),
+        "priority_class": "routine",
+        "source_path": "water_sensor->broker",
+        "expected_inputs": 1,
+        "received_inputs": 1,
+        "expected_devices": 1,
+        "activated_devices": 0
+    }
 
 def load_wifi_config():
     if CONFIG_PATH not in os.listdir():
@@ -300,6 +327,7 @@ def send_water_alert():
         "value": 1,
         "timestamp": now_str()
     }
+    payload.update(build_test_fields())
     blink_once(40, 40)
     print("📤 수위 센서 전송:", payload)
     publish_json(MQTT_TOPIC, payload)
