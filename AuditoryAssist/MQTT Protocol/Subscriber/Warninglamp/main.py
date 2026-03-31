@@ -1,4 +1,3 @@
-#WarningLamp
 import network, time, ubinascii, ujson as json
 import socket, os, machine
 from machine import Pin
@@ -73,6 +72,7 @@ TOPIC_STATUS = "interfaceui/status/subscriber/%s" % DEVICE_ID
 TOPIC_HELLO = "interfaceui/registry/hello/%s" % DEVICE_ID
 TOPIC_REQ = "interfaceui/registry/request"
 TOPIC_LOG = "interfaceui/logs/subscriber/%s" % DEVICE_ID
+TOPIC_TEST_ACK = "test/ack/beacon/%s" % DEVICE_ID
 
 client = None
 wlan = None
@@ -212,6 +212,42 @@ def publish_hello(c):
     except Exception as e:
         print("hello publish err:", e)
 
+
+def publish_test_ack(payload):
+    global client
+    try:
+        if not isinstance(payload, dict):
+            return
+        if not payload.get("test_id"):
+            return
+        now_ms = int(time.time() * 1000)
+        t_broker_recv_ms = int(payload.get("t_broker_recv_ms", now_ms))
+        ack = {
+            "test_group": payload.get("test_group", ""),
+            "test_id": payload.get("test_id", ""),
+            "scenario_id": payload.get("scenario_id", ""),
+            "trial_no": payload.get("trial_no", ""),
+            "seq": payload.get("seq", ""),
+            "event": payload.get("event", ""),
+            "priority_class": payload.get("priority_class", ""),
+            "device_id": DEVICE_ID,
+            "source_path": payload.get("source_path", "sensor->broker->beacon"),
+            "expected_inputs": payload.get("expected_inputs", 1),
+            "received_inputs": payload.get("received_inputs", 1),
+            "expected_devices": payload.get("expected_devices", 1),
+            "activated_devices": 1,
+            "t_sent_ms": payload.get("t_sent_ms", ""),
+            "t_broker_recv_ms": t_broker_recv_ms,
+            "t_broker_publish_ms": payload.get("t_broker_publish_ms", now_ms),
+            "t_sink_recv_ms": now_ms,
+            "e2e_latency_ms": now_ms - t_broker_recv_ms,
+            "status": "received"
+        }
+        if client:
+            client.publish(TOPIC_TEST_ACK, json.dumps(ack), qos=0)
+    except Exception as e:
+        print("⚠️ beacon test ack error:", e)
+
 def make_client():
     global wlan
     if wlan is None:
@@ -257,6 +293,7 @@ def handle_message(c, t_b, m_b):
         on_ms = int(data.get("on_ms",250))
         off_ms = int(data.get("off_ms",250))
         blink_once(40,40)
+        publish_test_ack(data)
         end = time.ticks_add(time.ticks_ms(), duration_ms)
         state = False
         while time.ticks_diff(end, time.ticks_ms()) > 0 and _is_current(token):
@@ -269,7 +306,7 @@ def handle_message(c, t_b, m_b):
             beacon_off(); set_led(False)
         return
     if cmd == "beacon_stop":
-        _new_token(); beacon_off(); set_led(False); return
+        _new_token(); beacon_off(); set_led(False); publish_test_ack(data); return
     log("warn","unknown cmd", cmd=cmd)
 
 def mqtt_connect_and_subscribe():
