@@ -1,8 +1,20 @@
 import csv
 import os
 import statistics
+import sys
 from collections import defaultdict
-from openpyxl import Workbook
+
+print("[metrics_exporter] python =", sys.executable)
+
+try:
+    from openpyxl import Workbook
+    OPENPYXL_AVAILABLE = True
+except ModuleNotFoundError as e:
+    Workbook = None
+    OPENPYXL_AVAILABLE = False
+    print("⚠️ openpyxl import failed:", e)
+    print("[metrics_exporter] sys.executable =", sys.executable)
+    print("[metrics_exporter] sys.path =", sys.path)
 
 BASE_DIR = "metrics"
 TRIALS_CSV = os.path.join(BASE_DIR, "trial_results.csv")
@@ -54,6 +66,20 @@ def _write_sheet(ws, rows: list[dict]) -> None:
     ws.append(header)
     for row in rows:
         ws.append([row.get(h, "") for h in header])
+
+def _write_csv_summary(path: str, rows: list[dict]) -> None:
+    os.makedirs(BASE_DIR, exist_ok=True)
+    if not rows:
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow(["NO DATA"])
+        return
+
+    header = list(rows[0].keys())
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=header)
+        writer.writeheader()
+        writer.writerows(rows)
 
 def _summarize(rows: list[dict], group_name: str) -> list[dict]:
     grouped = defaultdict(list)
@@ -142,6 +168,7 @@ def _summarize(rows: list[dict], group_name: str) -> list[dict]:
                 expected_devices = _to_int(r.get("expected_devices"))
                 activated_devices = _to_int(r.get("activated_devices"))
                 completeness.append((activated_devices / expected_devices * 100) if expected_devices > 0 else 0)
+
             out.append({
                 "test_id": test_id,
                 "scenario_id": scenario_id,
@@ -160,10 +187,21 @@ def _summarize(rows: list[dict], group_name: str) -> list[dict]:
 
 def export_all() -> None:
     rows = _read_csv(TRIALS_CSV)
+
     sr = _summarize(rows, "SR")
     fp = _summarize(rows, "FP")
     pr = _summarize(rows, "PR")
     cm = _summarize(rows, "CM")
+
+    # CSV summary는 항상 생성
+    _write_csv_summary(os.path.join(BASE_DIR, "sr_summary.csv"), sr)
+    _write_csv_summary(os.path.join(BASE_DIR, "fp_summary.csv"), fp)
+    _write_csv_summary(os.path.join(BASE_DIR, "pr_summary.csv"), pr)
+    _write_csv_summary(os.path.join(BASE_DIR, "cm_summary.csv"), cm)
+
+    if not OPENPYXL_AVAILABLE:
+        print("⚠️ openpyxl 없음: XLSX 대신 CSV summary만 생성")
+        return
 
     os.makedirs(BASE_DIR, exist_ok=True)
     wb = Workbook()
@@ -185,6 +223,7 @@ def export_all() -> None:
     _write_sheet(ws, rows)
 
     wb.save(XLSX_PATH)
+    print("✅ metrics_summary.xlsx 저장 완료:", XLSX_PATH)
 
 if __name__ == "__main__":
     export_all()
