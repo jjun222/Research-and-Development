@@ -1,4 +1,4 @@
-# gas sensor - final revised stable
+# gas sensor - final revised stable (fixed WDT/socket timeout)
 import machine, time, network, ujson, gc
 import socket, os
 from simple import MQTTClient   # umqtt.simple
@@ -47,7 +47,7 @@ LED_BLINK_MS         = 500
 WARMUP_MS            = 20_000
 WARMUP_LOG_MS        = 10_000
 WARMUP_LED_MS        = 120
-WARMUP_STATUS_MS     = 30_000   # 예열 중 status 주기
+WARMUP_STATUS_MS     = 30_000
 
 FILTER_SAMPLES       = 7
 FILTER_DELAY_MS      = 20
@@ -56,9 +56,9 @@ AVG_WINDOW           = 5
 THRESHOLD_HIGH       = 30_000
 THRESHOLD_LOW        = 28_000
 
-HEARTBEAT_MS         = 10_000   # 센서 데이터 heartbeat
-STATUS_HEARTBEAT_MS  = 60_000   # status 토픽 heartbeat (분리)
-PUBLISH_GAP_MS       = 120      # 연속 publish 사이 간격
+HEARTBEAT_MS         = 10_000
+STATUS_HEARTBEAT_MS  = 60_000
+PUBLISH_GAP_MS       = 120
 
 FAULT_MIN_VALID      = 50
 FAULT_MAX_VALID      = 65_000
@@ -71,7 +71,13 @@ MQTT_RECONNECT_MAX   = 15
 MAX_RECOVERY_FAILS   = 8
 
 GC_INTERVAL_MS       = 30_000
-WDT_TIMEOUT_MS       = 30_000   # 8초 -> 30초 완화
+
+# 중요: Pico W에서 8388ms 이하로 둬야 실제 시작됨
+WDT_TIMEOUT_MS       = 8000
+
+# publish 블로킹 완화용
+SOCKET_TIMEOUT_SEC   = 3
+
 DEBUG_PUBLISH        = True
 
 wlan   = None
@@ -178,7 +184,7 @@ def build_test_fields(priority_class):
         "scenario_id": SCENARIO_ID,
         "trial_no": TRIAL_NO,
         "seq": next_seq(),
-        "t_sent_ms": int(uptime_ms()),  # monotonic uptime 기준
+        "t_sent_ms": int(uptime_ms()),   # monotonic uptime 기준
         "publisher_clock": "monotonic_uptime_ms",
         "publisher_reset_cause": reset_cause_name(),
         "priority_class": priority_class,
@@ -402,15 +408,25 @@ def startup_wifi_or_portal():
     return False
 
 # ========= MQTT =========
+def apply_socket_timeout():
+    global client
+    try:
+        if client is not None and hasattr(client, "sock") and client.sock is not None:
+            client.sock.settimeout(SOCKET_TIMEOUT_SEC)
+            print("⏱️ MQTT socket timeout =", SOCKET_TIMEOUT_SEC, "sec")
+    except Exception as e:
+        print("⚠️ socket timeout 설정 실패:", e)
+
 def mqtt_connect():
     global client
     try:
         client = MQTTClient(MQTT_CLIENT_ID, MQTT_BROKER, keepalive=KEEPALIVE_SEC)
         client.connect()
+        apply_socket_timeout()
+
         print("✅ MQTT 연결 완료 (broker =", MQTT_BROKER, ")")
         blink_n(5)
 
-        # online 상태는 즉시 1회 발행
         ok = publish_device_status(state="online", value=None, reason="mqtt_connected")
         if not ok:
             print("⚠️ online status 발행 실패")
@@ -519,11 +535,13 @@ def publish_json(topic, obj):
 
         except Exception as e:
             print("❗ publish 실패[%d]:" % (attempt + 1), e)
+
             try:
                 if client is not None:
                     client.disconnect()
             except Exception:
                 pass
+
             client = None
 
             if not mqtt_reconnect_with_backoff():
@@ -718,12 +736,10 @@ def run_loop():
             if time.ticks_diff(now, t_last_fault_log) >= FAULT_LOG_MS:
                 print(
                     "⚠️ 센서 이상 상태 유지 중...",
-                    "(filtered=%d, raw=%d, median=%d)" %
-                    (gas_value, raw_value, median_value)
+                    "(filtered=%d, raw=%d, median=%d)" % (gas_value, raw_value, median_value)
                 )
                 t_last_fault_log = now
 
-            # fault 상태는 즉시 status 유지
             if time.ticks_diff(now, t_last_status) >= STATUS_HEARTBEAT_MS:
                 ok = publish_device_status(state="fault", value=gas_value, reason="heartbeat")
                 if not ok:
