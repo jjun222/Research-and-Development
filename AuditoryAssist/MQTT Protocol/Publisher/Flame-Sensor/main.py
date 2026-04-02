@@ -1,5 +1,5 @@
-# Flame-Sensor
-import machine, time, network, ujson
+# shz flame sensor - final revised stable
+import machine, time, network, ujson, gc
 import socket, os
 from simple import MQTTClient
 
@@ -19,35 +19,50 @@ except Exception:
 WIFI_SSID = ""
 WIFI_PASSWORD = ""
 
-CONFIG_PATH        = "wifi_config.json"
-DEFAULT_BROKER_IP  = "192.168.0.33"
+CONFIG_PATH       = "wifi_config.json"
+DEFAULT_BROKER_IP = "192.168.0.33"
 
 MQTT_BROKER    = DEFAULT_BROKER_IP
 MQTT_TOPIC     = "shz/sensor"
 MQTT_CLIENT_ID = "shz_sensor_pico"
 
-TEST_GROUP  = "SR"
-TEST_ID     = "SR-01C"
-SCENARIO_ID = "shz_to_broker"
-TRIAL_NO    = 1
+STATUS_TOPIC   = "interfaceui/status/publisher/" + MQTT_CLIENT_ID
+
+TEST_GROUP   = "SR"
+TEST_ID      = "SR-01C"
+SCENARIO_ID  = "shz_to_broker"
+TRIAL_NO     = 1
+PRIORITY_EMERGENCY = "emergency"
+PRIORITY_ROUTINE   = "routine"
 SEQ = 0
 
-KEEPALIVE_SEC      = 60
-PING_INTERVAL_MS   = 30_000
-HEARTBEAT_MS       = 10_000
-WIFI_RETRY_MAX     = 15
-MQTT_RECONNECT_MAX = 15
-MAX_RECOVERY_FAILS = 8
+KEEPALIVE_SEC        = 60
+PING_INTERVAL_MS     = 30_000
+HEARTBEAT_MS         = 10_000
+STATUS_HEARTBEAT_MS  = 60_000
+PUBLISH_GAP_MS       = 120
 
-BOOT_SETTLE_MS      = 2_000
-SAMPLE_INTERVAL_MS  = 20
-DETECT_STABLE_COUNT = 5
-CLEAR_STABLE_COUNT  = 5
-MIN_EVENT_GAP_MS    = 1_000
+WIFI_RETRY_MAX       = 15
+MQTT_RECONNECT_MAX   = 15
+MAX_RECOVERY_FAILS   = 8
+
+BOOT_SETTLE_MS       = 2_000
+SAMPLE_INTERVAL_MS   = 20
+DETECT_STABLE_COUNT  = 5
+CLEAR_STABLE_COUNT   = 5
+MIN_EVENT_GAP_MS     = 1_000
+LED_BLINK_MS         = 500
+
+GC_INTERVAL_MS       = 30_000
+WDT_TIMEOUT_MS       = 8000
+DEBUG_PUBLISH        = True
 
 wlan   = None
 client = None
+wdt    = None
+
 recovery_fail_count = 0
+BOOT_TICKS_MS = time.ticks_ms()
 
 # ========= AP =========
 AP_SSID = "shz_sensor_setup"
@@ -82,15 +97,62 @@ Content-Type: text/html; charset=utf-8\r
 """
 
 # ========= 유틸 =========
-def get_timestamp_string():
-    now = time.localtime()
-    return "{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}".format(*now)
+def now_str():
+    t = time.localtime()
+    return "%04d-%02d-%02d %02d:%02d:%02d" % t[:6]
 
+def uptime_ms():
+    return time.ticks_diff(time.ticks_ms(), BOOT_TICKS_MS)
 
 def next_seq():
     global SEQ
     SEQ += 1
     return SEQ
+
+def reset_cause_name():
+    cause = machine.reset_cause()
+    mapping = {}
+    if hasattr(machine, "PWRON_RESET"):
+        mapping[machine.PWRON_RESET] = "PWRON_RESET"
+    if hasattr(machine, "HARD_RESET"):
+        mapping[machine.HARD_RESET] = "HARD_RESET"
+    if hasattr(machine, "WDT_RESET"):
+        mapping[machine.WDT_RESET] = "WDT_RESET"
+    if hasattr(machine, "DEEPSLEEP_RESET"):
+        mapping[machine.DEEPSLEEP_RESET] = "DEEPSLEEP_RESET"
+    if hasattr(machine, "SOFT_RESET"):
+        mapping[machine.SOFT_RESET] = "SOFT_RESET"
+    return mapping.get(cause, str(cause))
+
+def start_watchdog():
+    global wdt
+    try:
+        wdt = machine.WDT(timeout=WDT_TIMEOUT_MS)
+        print("🛡️ WDT 시작:", WDT_TIMEOUT_MS, "ms")
+    except Exception as e:
+        wdt = None
+        print("⚠️ WDT 시작 실패:", e)
+
+def feed_wdt():
+    global wdt
+    try:
+        if wdt is not None:
+            wdt.feed()
+    except Exception:
+        pass
+
+def maybe_gc(last_gc_ms):
+    now = time.ticks_ms()
+    if time.ticks_diff(now, last_gc_ms) >= GC_INTERVAL_MS:
+        gc.collect()
+        return now
+    return last_gc_ms
+
+def short_gap(ms=PUBLISH_GAP_MS):
+    feed_wdt()
+    gc.collect()
+    time.sleep_ms(ms)
+    feed_wdt()
 
 def build_test_fields(priority_class):
     return {
@@ -99,7 +161,9 @@ def build_test_fields(priority_class):
         "scenario_id": SCENARIO_ID,
         "trial_no": TRIAL_NO,
         "seq": next_seq(),
-        "t_sent_ms": int(time.time() * 1000),
+        "t_sent_ms": int(uptime_ms()),
+        "publisher_clock": "monotonic_uptime_ms",
+        "publisher_reset_cause": reset_cause_name(),
         "priority_class": priority_class,
         "source_path": "shz_sensor->broker",
         "expected_inputs": 1,
@@ -123,6 +187,15 @@ def blink_once(on_ms=80, off_ms=80):
 def blink_n(n, on_ms=80, off_ms=80):
     for _ in range(n):
         blink_once(on_ms, off_ms)
+
+def get_ip():
+    global wlan
+    try:
+        if wlan is not None and wlan.isconnected():
+            return wlan.ifconfig()[0]
+    except Exception:
+        pass
+    return ""
 
 def load_wifi_config():
     if CONFIG_PATH not in os.listdir():
@@ -152,9 +225,9 @@ def url_decode(s):
         c = s[i]
         if c == '+':
             res += ' '
-        elif c == '%' and i+2 < len(s):
+        elif c == '%' and i + 2 < len(s):
             try:
-                res += chr(int(s[i+1:i+3], 16))
+                res += chr(int(s[i + 1:i + 3], 16))
                 i += 2
             except Exception:
                 res += c
@@ -175,6 +248,7 @@ def parse_form(body):
 # ========= Wi-Fi =========
 def try_connect_wifi(ssid, pw):
     global wlan
+
     if not ssid or not pw:
         print("⚠️ SSID 또는 PW 없음")
         return False
@@ -190,16 +264,20 @@ def try_connect_wifi(ssid, pw):
     except Exception:
         pass
 
-    wlan.active(False)
-    time.sleep(1)
-    wlan.active(True)
-    time.sleep(1)
+    try:
+        wlan.active(False)
+        time.sleep(1)
+        wlan.active(True)
+        time.sleep(1)
+    except Exception as e:
+        print("⚠️ WLAN 재활성화 실패:", e)
 
     print("📡 Wi-Fi 연결 시도:", ssid)
     wlan.connect(ssid, pw)
 
     attempt = 0
     while not wlan.isconnected() and attempt < WIFI_RETRY_MAX:
+        feed_wdt()
         attempt += 1
         time.sleep(0.5)
 
@@ -238,10 +316,15 @@ def wifi_connect():
 
 def wifi_ensure():
     global wlan
-    if wlan is None or (not wlan.isconnected()):
-        if not wifi_connect():
-            print("⚠️ Wi-Fi 미연결 상태")
-            return False
+    try:
+        if wlan is None or (not wlan.isconnected()):
+            print("⚠️ Wi-Fi 미연결 감지 → 재연결")
+            if not wifi_connect():
+                print("⚠️ Wi-Fi 미연결 상태")
+                return False
+    except Exception as e:
+        print("⚠️ wifi_ensure 예외:", e)
+        return False
     return True
 
 # ========= AP =========
@@ -309,7 +392,12 @@ def mqtt_connect():
         client.connect()
         print("✅ MQTT 연결 완료 (broker =", MQTT_BROKER, ")")
         blink_n(5)
+
+        ok = publish_device_status(state="online", value=None, reason="mqtt_connected")
+        if not ok:
+            print("⚠️ online status 발행 실패")
         return True
+
     except Exception as e:
         print("❌ MQTT 연결 실패:", e)
         client = None
@@ -329,8 +417,11 @@ def mqtt_ping():
 def mqtt_reconnect_with_backoff():
     global client
     backoff = 0.5
+
     for attempt in range(MQTT_RECONNECT_MAX):
+        feed_wdt()
         print("🔁 MQTT 재연결 시도", attempt + 1)
+
         ok_wifi = wifi_ensure()
         if not ok_wifi:
             time.sleep(backoff)
@@ -383,12 +474,16 @@ def hard_recover(reason="unknown"):
 
 def publish_json(topic, obj):
     global client
+
     msg = ujson.dumps(obj)
     if isinstance(msg, str):
         msg = msg.encode()
 
     backoff = 0.5
+
     for attempt in range(4):
+        feed_wdt()
+
         if client is None:
             if not mqtt_reconnect_with_backoff():
                 time.sleep(backoff)
@@ -396,37 +491,89 @@ def publish_json(topic, obj):
                 continue
 
         try:
+            gc.collect()
+            if DEBUG_PUBLISH:
+                print("➡️ publish start:", topic, "try=", attempt + 1, "len=", len(msg))
             client.publish(topic, msg)
+            if DEBUG_PUBLISH:
+                print("✅ publish done :", topic)
             return True
+
         except Exception as e:
             print("❗ publish 실패[%d]:" % (attempt + 1), e)
+            try:
+                if client is not None:
+                    client.disconnect()
+            except Exception:
+                pass
+            client = None
+
             if not mqtt_reconnect_with_backoff():
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 5)
 
     return False
 
+def publish_device_status(state="normal", value=None, reason="heartbeat"):
+    payload = {
+        "id": MQTT_CLIENT_ID,
+        "type": "publisher",
+        "device_type": "flame_sensor",
+        "online": True,
+        "wifi": (wlan is not None and wlan.isconnected()),
+        "mqtt": (client is not None),
+        "ip": get_ip(),
+        "state": state,
+        "value": value,
+        "reason": reason,
+        "ts": now_str(),
+        "publisher_uptime_ms": int(uptime_ms()),
+        "publisher_reset_cause": reset_cause_name()
+    }
+    return publish_json(STATUS_TOPIC, payload)
+
 def send_status(is_detected, reason="heartbeat"):
     payload = {
         "sensor_id": MQTT_CLIENT_ID,
         "event": "shz_detected",
-        "value": "감지됨" if is_detected else "정상",
-        "reason": reason,
+        "status": "불꽃 감지!" if is_detected else "정상",
+        "value": 1 if is_detected else 0,
         "raw_active_low": 0 if is_detected else 1,
-        "timestamp": get_timestamp_string()
+        "reason": reason,
+        "timestamp": now_str(),
+        "publisher_uptime_ms": int(uptime_ms()),
+        "publisher_reset_cause": reset_cause_name()
     }
-    payload.update(build_test_fields("emergency" if is_detected else "routine"))
-    print("📤 상태 전송:", payload["value"], "(reason=%s)" % reason)
+
+    payload.update(build_test_fields(PRIORITY_EMERGENCY if is_detected else PRIORITY_ROUTINE))
+
+    print(
+        "📤 상태 전송:",
+        "🔥 불꽃 감지!" if is_detected else "✅ 정상",
+        "(reason=%s, seq=%d)" % (reason, payload["seq"])
+    )
+
     blink_once(40, 40)
-    publish_json(MQTT_TOPIC, payload)
+    ok = publish_json(MQTT_TOPIC, payload)
+    if not ok:
+        print("❌ 상태 publish 최종 실패")
+    return ok
 
 # ========= 센서 =========
 def read_sensor_active():
     return fire_sensor.value() == 0
 
 # ========= 메인 =========
-def main():
+def run_loop():
     global recovery_fail_count
+
+    print("====================================")
+    print("🚀 BOOT START")
+    print("🧾 reset cause =", reset_cause_name())
+    print("🧠 free mem before gc =", gc.mem_free())
+    gc.collect()
+    print("🧠 free mem after  gc =", gc.mem_free())
+    print("====================================")
 
     set_led(False)
     blink_n(2)
@@ -438,12 +585,17 @@ def main():
         print("❌ 초기 MQTT 연결 실패, 5초 후 재시도")
         time.sleep(5)
 
+    start_watchdog()
+
     print("📍 SHZ 센서 모니터링 시작")
 
     t_ping = time.ticks_ms()
     t_last_heartbeat = time.ticks_ms()
+    t_last_status = time.ticks_ms()
     t_last_sample = time.ticks_ms()
+    t_last_gc = time.ticks_ms()
     last_event_ms = 0
+    last_led_ms = time.ticks_ms()
 
     detect_count = 0
     clear_count = 0
@@ -451,9 +603,12 @@ def main():
     last_sent_state = None
 
     while True:
+        feed_wdt()
         now = time.ticks_ms()
+        t_last_gc = maybe_gc(t_last_gc)
 
         if time.ticks_diff(now, t_ping) >= PING_INTERVAL_MS:
+            print("🔎 keepalive check")
             ok_wifi = wifi_ensure()
             ok_mqtt = mqtt_ping() if ok_wifi else False
 
@@ -489,33 +644,82 @@ def main():
             if time.ticks_diff(now, last_event_ms) >= MIN_EVENT_GAP_MS:
                 stable_detected = True
                 last_event_ms = now
-                send_status(True, "state_change")
+
+                ok1 = send_status(True, "state_change")
+                short_gap()
+                ok2 = publish_device_status(state="alarm", value=1, reason="state_change")
+
+                if not ok1:
+                    print("⚠️ state_change sensor publish 실패")
+                if not ok2:
+                    print("⚠️ state_change status publish 실패")
+
                 last_sent_state = True
                 t_last_heartbeat = now
+                t_last_status = now
                 print("🔥 SHZ 안정 감지 전환")
 
         elif stable_detected and clear_count >= CLEAR_STABLE_COUNT:
             if time.ticks_diff(now, last_event_ms) >= MIN_EVENT_GAP_MS:
                 stable_detected = False
                 last_event_ms = now
-                send_status(False, "state_change")
+
+                ok1 = send_status(False, "state_change")
+                short_gap()
+                ok2 = publish_device_status(state="normal", value=0, reason="state_change")
+
+                if not ok1:
+                    print("⚠️ state_change sensor publish 실패")
+                if not ok2:
+                    print("⚠️ state_change status publish 실패")
+
                 last_sent_state = False
                 t_last_heartbeat = now
+                t_last_status = now
                 print("🔄 SHZ 정상 복귀")
 
         if time.ticks_diff(now, t_last_heartbeat) >= HEARTBEAT_MS:
             if last_sent_state is None:
-                send_status(stable_detected, "startup_sync")
+                ok = send_status(stable_detected, "startup_sync")
                 last_sent_state = stable_detected
             else:
-                send_status(stable_detected, "heartbeat")
+                ok = send_status(stable_detected, "heartbeat")
+
+            if not ok:
+                print("⚠️ heartbeat sensor publish 실패")
+
             t_last_heartbeat = now
+
+        if time.ticks_diff(now, t_last_status) >= STATUS_HEARTBEAT_MS:
+            short_gap()
+            ok = publish_device_status(
+                state="alarm" if stable_detected else "normal",
+                value=1 if stable_detected else 0,
+                reason="heartbeat"
+            )
+            if not ok:
+                print("⚠️ heartbeat status publish 실패")
+            t_last_status = now
 
         if stable_detected:
             set_led(True)
         else:
-            set_led((now // 500) % 2 == 0)
+            if time.ticks_diff(now, last_led_ms) >= LED_BLINK_MS:
+                last_led_ms = now
+                set_led(not led.value())
 
         time.sleep_ms(5)
+
+def main():
+    while True:
+        try:
+            run_loop()
+        except Exception as e:
+            print("💥 main loop 예외:", e)
+            try:
+                time.sleep(2)
+            except Exception:
+                pass
+            machine.reset()
 
 main()
