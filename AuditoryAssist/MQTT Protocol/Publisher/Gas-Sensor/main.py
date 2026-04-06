@@ -1,4 +1,4 @@
-# gas sensor - final revised stable (fixed WDT/socket timeout)
+# gas sensor - final stable for SR test
 import machine, time, network, ujson, gc
 import socket, os
 from simple import MQTTClient   # umqtt.simple
@@ -7,11 +7,9 @@ from simple import MQTTClient   # umqtt.simple
 GAS_SENSOR_PIN = 26
 gas_sensor = machine.ADC(GAS_SENSOR_PIN)
 
-# 외부 LED
 LED_PIN = 28
 led = machine.Pin(LED_PIN, machine.Pin.OUT)
 
-# Pico W 내장 LED
 try:
     onboard_led = machine.Pin("LED", machine.Pin.OUT)
 except Exception:
@@ -31,7 +29,7 @@ MQTT_CLIENT_ID = "gas_sensor_pico"
 STATUS_TOPIC   = "interfaceui/status/publisher/" + MQTT_CLIENT_ID
 
 # ========= 테스트 기본값 =========
-TEST_GROUP   = "SR"               # SR / FP / PR / CM
+TEST_GROUP   = "SR"
 TEST_ID      = "SR-01A"
 SCENARIO_ID  = "gas_to_broker"
 TRIAL_NO     = 1
@@ -67,24 +65,29 @@ FAULT_CONSEC_GOOD    = 3
 FAULT_LOG_MS         = 10_000
 
 WIFI_RETRY_MAX       = 15
-MQTT_RECONNECT_MAX   = 15
-MAX_RECOVERY_FAILS   = 8
+MQTT_RECONNECT_MAX   = 10
+MAX_RECOVERY_FAILS   = 5
 
-GC_INTERVAL_MS       = 30_000
+GC_INTERVAL_MS       = 20_000
 
-# 중요: Pico W에서 8388ms 이하로 둬야 실제 시작됨
+# Pico W에서 실제 동작 가능한 값
 WDT_TIMEOUT_MS       = 8000
 
-# publish 블로킹 완화용
 SOCKET_TIMEOUT_SEC   = 3
-
 DEBUG_PUBLISH        = True
+
+# SR 테스트 중에는 status heartbeat를 끄는 것이 안전
+ENABLE_STATUS_HEARTBEAT = False
+
+# 같은 누적 publish 지점에서 무너지는 패턴 완화
+FORCE_ROTATE_AFTER_PUBLISHES = 40
 
 wlan   = None
 client = None
 wdt    = None
 
 recovery_fail_count = 0
+publish_success_count = 0
 BOOT_TICKS_MS = time.ticks_ms()
 
 # ========= AP 모드 =========
@@ -157,7 +160,6 @@ def start_watchdog():
         print("⚠️ WDT 시작 실패:", e)
 
 def feed_wdt():
-    global wdt
     try:
         if wdt is not None:
             wdt.feed()
@@ -184,7 +186,7 @@ def build_test_fields(priority_class):
         "scenario_id": SCENARIO_ID,
         "trial_no": TRIAL_NO,
         "seq": next_seq(),
-        "t_sent_ms": int(uptime_ms()),   # monotonic uptime 기준
+        "t_sent_ms": int(uptime_ms()),
         "publisher_clock": "monotonic_uptime_ms",
         "publisher_reset_cause": reset_cause_name(),
         "priority_class": priority_class,
@@ -212,7 +214,6 @@ def blink_n(n, on_ms=80, off_ms=80):
         blink_once(on_ms, off_ms)
 
 def get_ip():
-    global wlan
     try:
         if wlan is not None and wlan.isconnected():
             return wlan.ifconfig()[0]
@@ -269,6 +270,18 @@ def parse_form(body):
     return out
 
 # ========= Wi-Fi =========
+def reset_wifi_interface():
+    global wlan
+    try:
+        if wlan is None:
+            wlan = network.WLAN(network.STA_IF)
+        wlan.active(False)
+        time.sleep_ms(300)
+        wlan.active(True)
+        time.sleep_ms(300)
+    except Exception as e:
+        print("⚠️ Wi-Fi 인터페이스 리셋 실패:", e)
+
 def try_connect_wifi(ssid, pw):
     global wlan
 
@@ -287,13 +300,7 @@ def try_connect_wifi(ssid, pw):
     except Exception:
         pass
 
-    try:
-        wlan.active(False)
-        time.sleep(1)
-        wlan.active(True)
-        time.sleep(1)
-    except Exception as e:
-        print("⚠️ WLAN 재활성화 실패:", e)
+    reset_wifi_interface()
 
     print("📡 Wi-Fi 연결 시도:", ssid)
     wlan.connect(ssid, pw)
@@ -338,7 +345,6 @@ def wifi_connect():
     return connect_wifi_from_config()
 
 def wifi_ensure():
-    global wlan
     try:
         if wlan is None or (not wlan.isconnected()):
             print("⚠️ Wi-Fi 미연결 감지 → 재연결")
@@ -408,8 +414,31 @@ def startup_wifi_or_portal():
     return False
 
 # ========= MQTT =========
-def apply_socket_timeout():
+def close_mqtt_client():
     global client
+    try:
+        if client is not None:
+            try:
+                if hasattr(client, "sock") and client.sock is not None:
+                    try:
+                        client.sock.close()
+                    except Exception:
+                        pass
+                    client.sock = None
+            except Exception:
+                pass
+
+            try:
+                client.disconnect()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    client = None
+    gc.collect()
+
+def apply_socket_timeout():
     try:
         if client is not None and hasattr(client, "sock") and client.sock is not None:
             client.sock.settimeout(SOCKET_TIMEOUT_SEC)
@@ -418,11 +447,16 @@ def apply_socket_timeout():
         print("⚠️ socket timeout 설정 실패:", e)
 
 def mqtt_connect():
-    global client
+    global client, publish_success_count
     try:
+        close_mqtt_client()
+        gc.collect()
+
         client = MQTTClient(MQTT_CLIENT_ID, MQTT_BROKER, keepalive=KEEPALIVE_SEC)
         client.connect()
         apply_socket_timeout()
+
+        publish_success_count = 0
 
         print("✅ MQTT 연결 완료 (broker =", MQTT_BROKER, ")")
         blink_n(5)
@@ -434,11 +468,10 @@ def mqtt_connect():
 
     except Exception as e:
         print("❌ MQTT 연결 실패:", e)
-        client = None
+        close_mqtt_client()
         return False
 
 def mqtt_ping():
-    global client
     if client is None:
         return False
     try:
@@ -449,12 +482,15 @@ def mqtt_ping():
         return False
 
 def mqtt_reconnect_with_backoff():
-    global client
     backoff = 0.5
 
     for attempt in range(MQTT_RECONNECT_MAX):
         feed_wdt()
-        print("🔁 MQTT 재연결 시도", attempt + 1)
+        print("🔁 MQTT 재연결 시도", attempt + 1, "(free mem =", gc.mem_free(), ")")
+
+        close_mqtt_client()
+        gc.collect()
+        reset_wifi_interface()
 
         ok_wifi = wifi_ensure()
         if not ok_wifi:
@@ -463,51 +499,36 @@ def mqtt_reconnect_with_backoff():
             continue
 
         try:
-            if client is not None:
-                try:
-                    client.disconnect()
-                except Exception:
-                    pass
-
             if mqtt_connect():
                 print("✅ MQTT 재연결 성공")
                 return True
-
         except Exception as e:
             print("❌ MQTT 재연결 중 예외:", e)
 
+        gc.collect()
         time.sleep(backoff)
         backoff = min(backoff * 2, 5)
 
     print("🚫 MQTT 재연결 포기")
     return False
 
+def maybe_rotate_mqtt():
+    global publish_success_count
+    if publish_success_count >= FORCE_ROTATE_AFTER_PUBLISHES:
+        print("♻️ 정기 MQTT 회전 실행 (publish count =", publish_success_count, ")")
+        mqtt_reconnect_with_backoff()
+        publish_success_count = 0
+
 def hard_recover(reason="unknown"):
-    global client, wlan
     print("♻️ 하드 복구 실행:", reason)
     blink_n(4, 120, 120)
-
-    try:
-        if client is not None:
-            client.disconnect()
-    except Exception:
-        pass
-    client = None
-
-    try:
-        if wlan is not None:
-            wlan.active(False)
-            time.sleep(1)
-            wlan.active(True)
-            time.sleep(1)
-    except Exception:
-        pass
-
+    close_mqtt_client()
+    reset_wifi_interface()
     time.sleep(2)
     machine.reset()
 
 def publish_json(topic, obj):
-    global client
+    global publish_success_count
 
     msg = ujson.dumps(obj)
     if isinstance(msg, str):
@@ -526,23 +547,24 @@ def publish_json(topic, obj):
 
         try:
             gc.collect()
+
             if DEBUG_PUBLISH:
-                print("➡️ publish start:", topic, "try=", attempt + 1, "len=", len(msg))
+                print("➡️ publish start:", topic, "try=", attempt + 1, "len=", len(msg), "free=", gc.mem_free())
+
             client.publish(topic, msg)
+
             if DEBUG_PUBLISH:
                 print("✅ publish done :", topic)
+
+            publish_success_count += 1
+            maybe_rotate_mqtt()
             return True
 
         except Exception as e:
-            print("❗ publish 실패[%d]:" % (attempt + 1), e)
+            print("❗ publish 실패[%d]:" % (attempt + 1), e, "(free=", gc.mem_free(), ")")
 
-            try:
-                if client is not None:
-                    client.disconnect()
-            except Exception:
-                pass
-
-            client = None
+            close_mqtt_client()
+            gc.collect()
 
             if not mqtt_reconnect_with_backoff():
                 time.sleep(backoff)
@@ -740,7 +762,7 @@ def run_loop():
                 )
                 t_last_fault_log = now
 
-            if time.ticks_diff(now, t_last_status) >= STATUS_HEARTBEAT_MS:
+            if ENABLE_STATUS_HEARTBEAT and time.ticks_diff(now, t_last_status) >= STATUS_HEARTBEAT_MS:
                 ok = publish_device_status(state="fault", value=gas_value, reason="heartbeat")
                 if not ok:
                     print("⚠️ fault status publish 실패")
@@ -788,8 +810,8 @@ def run_loop():
                 print("⚠️ heartbeat sensor publish 실패")
             t_last_report = now
 
-        # status heartbeat는 별도 주기
-        if time.ticks_diff(now, t_last_status) >= STATUS_HEARTBEAT_MS:
+        # status heartbeat는 기본 OFF
+        if ENABLE_STATUS_HEARTBEAT and time.ticks_diff(now, t_last_status) >= STATUS_HEARTBEAT_MS:
             short_gap()
             ok = publish_device_status(
                 state="alarm" if current_fire_state else "normal",
@@ -808,6 +830,8 @@ def main():
             run_loop()
         except Exception as e:
             print("💥 main loop 예외:", e)
+            close_mqtt_client()
+            gc.collect()
             try:
                 time.sleep(2)
             except Exception:
