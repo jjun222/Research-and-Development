@@ -1,9 +1,8 @@
-# mq7 sensor - final revised stable
+# mq7 sensor - final stable for SR test
 import machine, time, network, ujson, gc
 import socket, os
 from simple import MQTTClient
 
-# ========= 하드웨어/네트워크 설정 =========
 MQ7_SENSOR_PIN = 27
 mq7_sensor = machine.ADC(MQ7_SENSOR_PIN)
 
@@ -21,14 +20,11 @@ WIFI_PASSWORD = ""
 CONFIG_PATH       = "wifi_config.json"
 DEFAULT_BROKER_IP = "192.168.0.33"
 
-# ========= MQTT 정보 =========
 MQTT_BROKER    = DEFAULT_BROKER_IP
 MQTT_TOPIC     = "mq7/sensor"
 MQTT_CLIENT_ID = "mq7_sensor_pico"
-
 STATUS_TOPIC   = "interfaceui/status/publisher/" + MQTT_CLIENT_ID
 
-# ========= 테스트 기본값 =========
 TEST_GROUP   = "SR"
 TEST_ID      = "SR-01B"
 SCENARIO_ID  = "mq7_to_broker"
@@ -37,49 +33,50 @@ PRIORITY_EMERGENCY = "emergency"
 PRIORITY_ROUTINE   = "routine"
 SEQ = 0
 
-# ========= 동작 파라미터 =========
 KEEPALIVE_SEC        = 60
-PING_INTERVAL_MS     = 30_000
+PING_INTERVAL_MS     = 30000
 LED_BLINK_MS         = 500
 
-WARMUP_MS            = 120_000   # MQ7 예열
-WARMUP_LOG_MS        = 10_000
+WARMUP_MS            = 120000
+WARMUP_LOG_MS        = 10000
 WARMUP_LED_MS        = 120
-WARMUP_STATUS_MS     = 30_000
+WARMUP_STATUS_MS     = 30000
 
 FILTER_SAMPLES       = 7
 FILTER_DELAY_MS      = 20
 AVG_WINDOW           = 5
 
-THRESHOLD_HIGH       = 30_000
-THRESHOLD_LOW        = 28_000
+THRESHOLD_HIGH       = 30000
+THRESHOLD_LOW        = 28000
 
-HEARTBEAT_MS         = 10_000
-STATUS_HEARTBEAT_MS  = 60_000
+HEARTBEAT_MS         = 10000
+STATUS_HEARTBEAT_MS  = 60000
 PUBLISH_GAP_MS       = 120
 
 FAULT_MIN_VALID      = 50
-FAULT_MAX_VALID      = 65_000
+FAULT_MAX_VALID      = 65000
 FAULT_CONSEC_BAD     = 5
 FAULT_CONSEC_GOOD    = 3
-FAULT_LOG_MS         = 10_000
+FAULT_LOG_MS         = 10000
 
 WIFI_RETRY_MAX       = 15
-MQTT_RECONNECT_MAX   = 15
-MAX_RECOVERY_FAILS   = 8
+MQTT_RECONNECT_MAX   = 10
+MAX_RECOVERY_FAILS   = 5
 
-GC_INTERVAL_MS       = 30_000
+GC_INTERVAL_MS       = 20000
 WDT_TIMEOUT_MS       = 8000
+SOCKET_TIMEOUT_SEC   = 3
 DEBUG_PUBLISH        = True
+ENABLE_STATUS_HEARTBEAT = False
+FORCE_ROTATE_AFTER_PUBLISHES = 40
 
 wlan   = None
 client = None
 wdt    = None
-
 recovery_fail_count = 0
+publish_success_count = 0
 BOOT_TICKS_MS = time.ticks_ms()
 
-# ========= AP 모드 =========
 AP_SSID = "mq7_sensor_setup"
 AP_PW   = "123456789"
 
@@ -111,7 +108,6 @@ Content-Type: text/html; charset=utf-8\r
 </body></html>
 """
 
-# ========= 유틸 =========
 def now_str():
     t = time.localtime()
     return "%04d-%02d-%02d %02d:%02d:%02d" % t[:6]
@@ -149,7 +145,6 @@ def start_watchdog():
         print("⚠️ WDT 시작 실패:", e)
 
 def feed_wdt():
-    global wdt
     try:
         if wdt is not None:
             wdt.feed()
@@ -204,7 +199,6 @@ def blink_n(n, on_ms=80, off_ms=80):
         blink_once(on_ms, off_ms)
 
 def get_ip():
-    global wlan
     try:
         if wlan is not None and wlan.isconnected():
             return wlan.ifconfig()[0]
@@ -260,7 +254,18 @@ def parse_form(body):
             out[k] = url_decode(v)
     return out
 
-# ========= Wi-Fi =========
+def reset_wifi_interface():
+    global wlan
+    try:
+        if wlan is None:
+            wlan = network.WLAN(network.STA_IF)
+        wlan.active(False)
+        time.sleep_ms(300)
+        wlan.active(True)
+        time.sleep_ms(300)
+    except Exception as e:
+        print("⚠️ Wi-Fi 인터페이스 리셋 실패:", e)
+
 def try_connect_wifi(ssid, pw):
     global wlan
 
@@ -279,13 +284,7 @@ def try_connect_wifi(ssid, pw):
     except Exception:
         pass
 
-    try:
-        wlan.active(False)
-        time.sleep(1)
-        wlan.active(True)
-        time.sleep(1)
-    except Exception as e:
-        print("⚠️ WLAN 재활성화 실패:", e)
+    reset_wifi_interface()
 
     print("📡 Wi-Fi 연결 시도:", ssid)
     wlan.connect(ssid, pw)
@@ -306,22 +305,19 @@ def try_connect_wifi(ssid, pw):
 
 def connect_wifi_from_config():
     global MQTT_BROKER
-
     cfg = load_wifi_config()
     if cfg:
         ssid = cfg.get("ssid")
-        pw   = cfg.get("password")
+        pw = cfg.get("password")
         if ssid and pw:
             if try_connect_wifi(ssid, pw):
-                broker = cfg.get("broker")
-                MQTT_BROKER = broker or DEFAULT_BROKER_IP
+                MQTT_BROKER = cfg.get("broker") or DEFAULT_BROKER_IP
                 print("🌐 config로 Wi-Fi 연결 OK, broker =", MQTT_BROKER)
                 return True
 
     if WIFI_SSID and WIFI_PASSWORD:
         if try_connect_wifi(WIFI_SSID, WIFI_PASSWORD):
             MQTT_BROKER = DEFAULT_BROKER_IP
-            print("🌐 기본 설정으로 연결, broker =", MQTT_BROKER)
             return True
 
     return False
@@ -330,28 +326,18 @@ def wifi_connect():
     return connect_wifi_from_config()
 
 def wifi_ensure():
-    global wlan
-    try:
-        if wlan is None or (not wlan.isconnected()):
-            print("⚠️ Wi-Fi 미연결 감지 → 재연결")
-            if not wifi_connect():
-                print("⚠️ Wi-Fi 미연결 상태")
-                return False
-    except Exception as e:
-        print("⚠️ wifi_ensure 예외:", e)
-        return False
+    if wlan is None or (not wlan.isconnected()):
+        print("⚠️ Wi-Fi 미연결 감지 → 재연결")
+        return wifi_connect()
     return True
 
-# ========= AP 포털 =========
 def start_config_portal():
     sta = network.WLAN(network.STA_IF)
     sta.active(False)
-
     ap = network.WLAN(network.AP_IF)
     ap.config(essid=AP_SSID, password=AP_PW)
     ap.active(True)
     print("📶 AP 모드 시작:", ap.ifconfig())
-    print("➡ 폰에서", AP_SSID, "접속 후 브라우저에서 http://192.168.4.1 열기")
 
     addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
     s = socket.socket()
@@ -375,8 +361,8 @@ def start_config_portal():
             parts = req_str.split("\r\n\r\n", 1)
             body = parts[1] if len(parts) > 1 else ""
             form = parse_form(body)
-            ssid   = form.get("ssid", "").strip()
-            pw     = form.get("pw", "").strip()
+            ssid = form.get("ssid", "").strip()
+            pw = form.get("pw", "").strip()
             broker = form.get("broker", "").strip()
 
             if ssid and pw:
@@ -399,27 +385,57 @@ def startup_wifi_or_portal():
     start_config_portal()
     return False
 
-# ========= MQTT =========
-def mqtt_connect():
+def close_mqtt_client():
     global client
     try:
+        if client is not None:
+            try:
+                if hasattr(client, "sock") and client.sock is not None:
+                    try:
+                        client.sock.close()
+                    except Exception:
+                        pass
+                    client.sock = None
+            except Exception:
+                pass
+            try:
+                client.disconnect()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    client = None
+    gc.collect()
+
+def apply_socket_timeout():
+    global client
+    try:
+        if client is not None and hasattr(client, "sock") and client.sock is not None:
+            client.sock.settimeout(SOCKET_TIMEOUT_SEC)
+            print("⏱️ MQTT socket timeout =", SOCKET_TIMEOUT_SEC, "sec")
+    except Exception as e:
+        print("⚠️ socket timeout 설정 실패:", e)
+
+def mqtt_connect():
+    global client, publish_success_count
+    try:
+        close_mqtt_client()
+        gc.collect()
         client = MQTTClient(MQTT_CLIENT_ID, MQTT_BROKER, keepalive=KEEPALIVE_SEC)
         client.connect()
+        apply_socket_timeout()
+        publish_success_count = 0
+
         print("✅ MQTT 연결 완료 (broker =", MQTT_BROKER, ")")
         blink_n(5)
-
-        ok = publish_device_status(state="online", value=None, reason="mqtt_connected")
-        if not ok:
-            print("⚠️ online status 발행 실패")
+        publish_device_status(state="online", value=None, reason="mqtt_connected")
         return True
-
     except Exception as e:
         print("❌ MQTT 연결 실패:", e)
-        client = None
+        close_mqtt_client()
         return False
 
 def mqtt_ping():
-    global client
     if client is None:
         return False
     try:
@@ -430,72 +446,53 @@ def mqtt_ping():
         return False
 
 def mqtt_reconnect_with_backoff():
-    global client
     backoff = 0.5
-
     for attempt in range(MQTT_RECONNECT_MAX):
         feed_wdt()
-        print("🔁 MQTT 재연결 시도", attempt + 1)
+        print("🔁 MQTT 재연결 시도", attempt + 1, "(free mem =", gc.mem_free(), ")")
+        close_mqtt_client()
+        gc.collect()
+        reset_wifi_interface()
 
         ok_wifi = wifi_ensure()
         if not ok_wifi:
             time.sleep(backoff)
             backoff = min(backoff * 2, 5)
             continue
-
         try:
-            if client is not None:
-                try:
-                    client.disconnect()
-                except Exception:
-                    pass
-
             if mqtt_connect():
                 print("✅ MQTT 재연결 성공")
                 return True
-
         except Exception as e:
             print("❌ MQTT 재연결 중 예외:", e)
-
+        gc.collect()
         time.sleep(backoff)
         backoff = min(backoff * 2, 5)
-
     print("🚫 MQTT 재연결 포기")
     return False
 
+def maybe_rotate_mqtt():
+    global publish_success_count
+    if publish_success_count >= FORCE_ROTATE_AFTER_PUBLISHES:
+        print("♻️ 정기 MQTT 회전 실행 (publish count =", publish_success_count, ")")
+        mqtt_reconnect_with_backoff()
+        publish_success_count = 0
+
 def hard_recover(reason="unknown"):
-    global client, wlan
     print("♻️ 하드 복구 실행:", reason)
     blink_n(4, 120, 120)
-
-    try:
-        if client is not None:
-            client.disconnect()
-    except Exception:
-        pass
-    client = None
-
-    try:
-        if wlan is not None:
-            wlan.active(False)
-            time.sleep(1)
-            wlan.active(True)
-            time.sleep(1)
-    except Exception:
-        pass
-
+    close_mqtt_client()
+    reset_wifi_interface()
     time.sleep(2)
     machine.reset()
 
 def publish_json(topic, obj):
-    global client
-
+    global publish_success_count
     msg = ujson.dumps(obj)
     if isinstance(msg, str):
         msg = msg.encode()
 
     backoff = 0.5
-
     for attempt in range(4):
         feed_wdt()
 
@@ -508,21 +505,17 @@ def publish_json(topic, obj):
         try:
             gc.collect()
             if DEBUG_PUBLISH:
-                print("➡️ publish start:", topic, "try=", attempt + 1, "len=", len(msg))
+                print("➡️ publish start:", topic, "try=", attempt + 1, "len=", len(msg), "free=", gc.mem_free())
             client.publish(topic, msg)
             if DEBUG_PUBLISH:
                 print("✅ publish done :", topic)
+            publish_success_count += 1
+            maybe_rotate_mqtt()
             return True
-
         except Exception as e:
-            print("❗ publish 실패[%d]:" % (attempt + 1), e)
-            try:
-                if client is not None:
-                    client.disconnect()
-            except Exception:
-                pass
-            client = None
-
+            print("❗ publish 실패[%d]:" % (attempt + 1), e, "(free=", gc.mem_free(), ")")
+            close_mqtt_client()
+            gc.collect()
             if not mqtt_reconnect_with_backoff():
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 5)
@@ -560,7 +553,6 @@ def send_status(value, is_alarm, reason="heartbeat", raw_value=None, median_valu
         "publisher_uptime_ms": int(uptime_ms()),
         "publisher_reset_cause": reset_cause_name()
     }
-
     payload.update(build_test_fields(PRIORITY_EMERGENCY if is_alarm else PRIORITY_ROUTINE))
 
     print(
@@ -576,7 +568,6 @@ def send_status(value, is_alarm, reason="heartbeat", raw_value=None, median_valu
         print("❌ 상태 publish 최종 실패")
     return ok
 
-# ========= 필터 =========
 filter_history = []
 
 def read_median_sample():
@@ -591,16 +582,13 @@ def read_median_sample():
 def read_filtered_adc():
     raw = mq7_sensor.read_u16()
     median_v = read_median_sample()
-
     filter_history.append(median_v)
     if len(filter_history) > AVG_WINDOW:
         filter_history.pop(0)
-
     avg_v = sum(filter_history) // len(filter_history)
     return raw, median_v, avg_v
 
-# ========= 메인 =========
-def run_loop():
+def main():
     global recovery_fail_count
 
     print("====================================")
@@ -615,7 +603,6 @@ def run_loop():
     blink_n(2)
 
     startup_wifi_or_portal()
-
     while not mqtt_connect():
         print("❌ 초기 MQTT 연결 실패, 5초 후 재시도")
         time.sleep(5)
@@ -637,7 +624,6 @@ def run_loop():
     led_state = False
     current_alarm_state = None
     last_sent_state = None
-
     fault_active = False
     fault_bad_count = 0
     fault_good_count = 0
@@ -663,10 +649,8 @@ def run_loop():
                     recovery_fail_count = 0
             else:
                 recovery_fail_count = 0
-
             t_ping = now
 
-        # 예열 구간
         if time.ticks_diff(now, boot_ms) < WARMUP_MS:
             if time.ticks_diff(now, t_led) >= WARMUP_LED_MS:
                 led_state = not led_state
@@ -679,9 +663,7 @@ def run_loop():
                 t_last_warmup_log = now
 
             if time.ticks_diff(now, t_last_status) >= WARMUP_STATUS_MS:
-                ok = publish_device_status(state="warming_up", value=None, reason="heartbeat")
-                if not ok:
-                    print("⚠️ warming_up status publish 실패")
+                publish_device_status(state="warming_up", value=None, reason="heartbeat")
                 t_last_status = now
 
             time.sleep(0.05)
@@ -694,7 +676,6 @@ def run_loop():
 
         raw_value, median_value, mq7_value = read_filtered_adc()
 
-        # fault 감지
         if mq7_value <= FAULT_MIN_VALID or mq7_value >= FAULT_MAX_VALID:
             fault_bad_count += 1
             fault_good_count = 0
@@ -712,23 +693,16 @@ def run_loop():
 
         if fault_active:
             if time.ticks_diff(now, t_last_fault_log) >= FAULT_LOG_MS:
-                print(
-                    "⚠️ 센서 이상 상태 유지 중...",
-                    "(filtered=%d, raw=%d, median=%d)" %
-                    (mq7_value, raw_value, median_value)
-                )
+                print("⚠️ 센서 이상 상태 유지 중...", "(filtered=%d, raw=%d, median=%d)" % (mq7_value, raw_value, median_value))
                 t_last_fault_log = now
 
-            if time.ticks_diff(now, t_last_status) >= STATUS_HEARTBEAT_MS:
-                ok = publish_device_status(state="fault", value=mq7_value, reason="heartbeat")
-                if not ok:
-                    print("⚠️ fault status publish 실패")
+            if ENABLE_STATUS_HEARTBEAT and time.ticks_diff(now, t_last_status) >= STATUS_HEARTBEAT_MS:
+                publish_device_status(state="fault", value=mq7_value, reason="heartbeat")
                 t_last_status = now
 
             time.sleep(0.1)
             continue
 
-        # 히스테리시스
         if current_alarm_state is None:
             current_alarm_state = (mq7_value >= THRESHOLD_HIGH)
         else:
@@ -739,58 +713,31 @@ def run_loop():
                 if mq7_value >= THRESHOLD_HIGH:
                     current_alarm_state = True
 
-        # 상태 변화 시
         if last_sent_state is None or current_alarm_state != last_sent_state:
             ok1 = send_status(mq7_value, current_alarm_state, "state_change", raw_value, median_value)
-
             short_gap()
-
-            ok2 = publish_device_status(
-                state="alarm" if current_alarm_state else "normal",
-                value=mq7_value,
-                reason="state_change"
-            )
-
+            ok2 = publish_device_status(state="alarm" if current_alarm_state else "normal",
+                                        value=mq7_value, reason="state_change")
             if not ok1:
                 print("⚠️ state_change sensor publish 실패")
             if not ok2:
                 print("⚠️ state_change status publish 실패")
-
             last_sent_state = current_alarm_state
             t_last_report = now
             t_last_status = now
 
-        # 센서 heartbeat
         elif time.ticks_diff(now, t_last_report) >= HEARTBEAT_MS:
             ok = send_status(mq7_value, current_alarm_state, "heartbeat", raw_value, median_value)
             if not ok:
                 print("⚠️ heartbeat sensor publish 실패")
             t_last_report = now
 
-        # status heartbeat
-        if time.ticks_diff(now, t_last_status) >= STATUS_HEARTBEAT_MS:
+        if ENABLE_STATUS_HEARTBEAT and time.ticks_diff(now, t_last_status) >= STATUS_HEARTBEAT_MS:
             short_gap()
-            ok = publish_device_status(
-                state="alarm" if current_alarm_state else "normal",
-                value=mq7_value,
-                reason="heartbeat"
-            )
-            if not ok:
-                print("⚠️ heartbeat status publish 실패")
+            publish_device_status(state="alarm" if current_alarm_state else "normal",
+                                  value=mq7_value, reason="heartbeat")
             t_last_status = now
 
         time.sleep(0.1)
-
-def main():
-    while True:
-        try:
-            run_loop()
-        except Exception as e:
-            print("💥 main loop 예외:", e)
-            try:
-                time.sleep(2)
-            except Exception:
-                pass
-            machine.reset()
 
 main()
