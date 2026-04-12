@@ -1,3 +1,4 @@
+// App.kt
 package com.example.interfaceui
 
 import android.app.Application
@@ -14,7 +15,7 @@ class App : Application() {
         // MQTT 기본 연결 초기화(화면용)
         MqttHelper.init(
             context = this,
-            serverUri = "tcp://192.168.0.24:1883"
+            serverUri = "tcp://192.168.0.33:1883"
         )
 
         // 로컬 로그 저장/수집 시작
