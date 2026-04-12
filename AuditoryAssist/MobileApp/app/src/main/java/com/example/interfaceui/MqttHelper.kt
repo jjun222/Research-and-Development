@@ -1,3 +1,4 @@
+// MqttHelper.kt
 package com.example.interfaceui
 
 import android.content.Context
@@ -126,7 +127,7 @@ class MqttHelper private constructor(
 
     companion object {
         private const val TAG = "MqttHelper"
-        private const val DEFAULT_URI = "tcp://192.168.0.24:1883"
+        private const val DEFAULT_URI = "tcp://192.168.0.33:1883"
 
         @Volatile private var _instance: MqttHelper? = null
         val instance: MqttHelper? get() = _instance
