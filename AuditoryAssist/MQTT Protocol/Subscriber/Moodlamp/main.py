@@ -1,41 +1,62 @@
-# Moodlamp.py
-import time, network, machine, neopixel, ubinascii
+import gc
+import os
+import socket
+import time
+
+import machine
+import network
+import neopixel
 import ujson as json
-import socket, os
+import ubinascii
 from umqtt.simple import MQTTClient
 
+# =========================================================
+# Device / MQTT configuration
+# =========================================================
 DEVICE_ID = "Neopixel_1"
 NEO_PIN = 28
 NUM_LED = 12
 
 WIFI_SSID = ""
 WIFI_PASSWORD = ""
-
 CONFIG_PATH = "wifi_config.json"
 DEFAULT_BROKER_IP = "192.168.0.33"
 
 MQTT_BROKER = DEFAULT_BROKER_IP
 MQTT_PORT = 1883
 KEEPALIVE = 60
-MAX_RECOVERY_FAILS = 8
 
-TOPIC_CMD_THIS = "neopixel/%s" % DEVICE_ID
+TOPIC_CMD_THIS = f"neopixel/{DEVICE_ID}"
 TOPIC_CMD_ALL = "neopixel/ALL"
-TOPIC_STATUS = "interfaceui/status/subscriber/%s" % DEVICE_ID
-TOPIC_HELLO = "interfaceui/registry/hello/%s" % DEVICE_ID
+TOPIC_STATUS = f"interfaceui/status/subscriber/{DEVICE_ID}"
+TOPIC_HELLO = f"interfaceui/registry/hello/{DEVICE_ID}"
 TOPIC_REQ = "interfaceui/registry/request"
-TOPIC_LOG = "interfaceui/logs/subscriber/%s" % DEVICE_ID
-
-# ✅ 추가: 테스트 ACK 토픽
-TOPIC_TEST_ACK = "test/ack/neopixel/%s" % DEVICE_ID
+TOPIC_LOG = f"interfaceui/logs/subscriber/{DEVICE_ID}"
 
 DEFAULT_MOOD_RGB = (250, 248, 104)
-DEFAULT_BRIGHT = 255
+DEFAULT_BRIGHTNESS = 255
 
-AP_SSID = "Neopixel_1_setup"
+# =========================================================
+# Runtime / safety configuration
+# =========================================================
+AP_SSID = f"{DEVICE_ID}_setup"
 AP_PW = "123456789"
 
-HTML_FORM = '''HTTP/1.1 200 OK\r
+BOOT_SETTLE_MS = 2000
+WDT_TIMEOUT_MS = 8000
+SOCKET_TIMEOUT_SEC = 3
+PING_INTERVAL_MS = 30000
+HELLO_INTERVAL_MS = 60000
+STATUS_HEARTBEAT_MS = 60000
+GC_INTERVAL_MS = 20000
+MQTT_RECONNECT_MAX = 10
+MAX_RECOVERY_FAILS = 8
+FORCE_ROTATE_AFTER_PUBLISHES = 120
+MAIN_LOOP_SLEEP_MS = 20
+PUBLISH_FAIL_MAX = 5
+NO_MSG_REFRESH_MS = 180000
+
+HTML_FORM = """HTTP/1.1 200 OK\r
 Content-Type: text/html; charset=utf-8\r
 \r
 <!DOCTYPE html>
@@ -48,110 +69,249 @@ PW: <input name="pw" type="password"><br>
 Broker IP: <input name="broker" value="%s"><br>
 <button type="submit">저장</button>
 </form></body></html>
-''' % DEFAULT_BROKER_IP
+""" % DEFAULT_BROKER_IP
 
-HTML_SAVED = '''HTTP/1.1 200 OK\r
+HTML_SAVED = """HTTP/1.1 200 OK\r
 Content-Type: text/html; charset=utf-8\r
 \r
 <html><body><p>저장되었습니다. 3초 후 재부팅합니다.</p></body></html>
-'''
+"""
 
-def clamp(v, lo, hi):
-    return lo if v < lo else (hi if v > hi else v)
-
-def hex_to_rgb(s):
-    s = s.strip().lstrip("#")
-    return (int(s[0:2],16), int(s[2:4],16), int(s[4:6],16))
-
-def apply_brightness(rgb, br):
-    r,g,b = rgb
-    return (r*br//255, g*br//255, b*br//255)
+# =========================================================
+# Hardware / global state
+# =========================================================
+try:
+    ONBOARD_LED = machine.Pin("LED", machine.Pin.OUT)
+except Exception:
+    ONBOARD_LED = None
 
 np = neopixel.NeoPixel(machine.Pin(NEO_PIN), NUM_LED)
+
 mood_rgb = DEFAULT_MOOD_RGB
-mood_bright = DEFAULT_BRIGHT
-client = None
+mood_brightness = DEFAULT_BRIGHTNESS
+
 wlan = None
-_EFFECT_GEN = 0
+client = None
+wdt = None
+
+_effect_generation = 0
 recovery_fail_count = 0
+publish_success_count = 0
+publish_fail_count = 0
+last_command_ms = time.ticks_ms()
+
+NAMED_COLORS = {
+    "red": (255, 0, 0),
+    "yellow": (255, 255, 0),
+    "green": (0, 255, 0),
+    "blue": (0, 0, 255),
+    "purple": (128, 0, 128),
+    "brown": (165, 42, 42),
+    "white": (255, 255, 255),
+    "black": (0, 0, 0),
+}
+
+
+# =========================================================
+# Basic helpers
+# =========================================================
+def now_ts():
+    return int(time.time())
+
+
+def get_ip():
+    try:
+        if wlan is not None and wlan.isconnected():
+            return wlan.ifconfig()[0]
+    except Exception:
+        pass
+    return ""
+
+
+def reset_cause_name():
+    cause = machine.reset_cause()
+    mapping = {}
+    for name in ("PWRON_RESET", "HARD_RESET", "WDT_RESET", "DEEPSLEEP_RESET", "SOFT_RESET"):
+        if hasattr(machine, name):
+            mapping[getattr(machine, name)] = name
+    return mapping.get(cause, str(cause))
+
+
+def clamp(value, low, high):
+    if value < low:
+        return low
+    if value > high:
+        return high
+    return value
+
+
+def hex_to_rgb(value):
+    value = value.strip().lstrip("#")
+    return (int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16))
+
+
+def apply_brightness(rgb, brightness):
+    r, g, b = rgb
+    return (r * brightness // 255, g * brightness // 255, b * brightness // 255)
+
+
+def set_led(on):
+    if ONBOARD_LED is not None:
+        ONBOARD_LED.value(1 if on else 0)
+
+
+def blink_once(on_ms=80, off_ms=80):
+    set_led(True)
+    time.sleep_ms(on_ms)
+    set_led(False)
+    time.sleep_ms(off_ms)
+
+
+def blink_n(count, on_ms=80, off_ms=80):
+    for _ in range(count):
+        blink_once(on_ms, off_ms)
+
 
 def set_all(color):
     for i in range(NUM_LED):
         np[i] = color
     np.write()
 
+
+def restore_mood():
+    set_all(apply_brightness(mood_rgb, mood_brightness))
+
+
+def start_watchdog():
+    global wdt
+    try:
+        wdt = machine.WDT(timeout=WDT_TIMEOUT_MS)
+        print("🛡️ WDT 시작:", WDT_TIMEOUT_MS, "ms")
+    except Exception as exc:
+        wdt = None
+        print("⚠️ WDT 시작 실패:", exc)
+
+
+def feed_wdt():
+    try:
+        if wdt is not None:
+            wdt.feed()
+    except Exception:
+        pass
+
+
+def maybe_gc(last_gc_ms):
+    now = time.ticks_ms()
+    if time.ticks_diff(now, last_gc_ms) >= GC_INTERVAL_MS:
+        gc.collect()
+        return now
+    return last_gc_ms
+
+
+# =========================================================
+# Wi-Fi configuration / AP portal
+# =========================================================
 def load_wifi_config():
     if CONFIG_PATH not in os.listdir():
         return None
     try:
-        with open(CONFIG_PATH, "r") as f:
-            return json.loads(f.read())
-    except Exception as e:
-        print("⚠️ config load 실패:", e)
+        with open(CONFIG_PATH, "r") as file:
+            return json.loads(file.read())
+    except Exception as exc:
+        print("⚠️ config load 실패:", exc)
         return None
 
-def save_wifi_config(ssid, pw, broker_ip=None):
-    cfg = {"ssid": ssid, "password": pw}
+
+def save_wifi_config(ssid, password, broker_ip=None):
+    config = {"ssid": ssid, "password": password}
     if broker_ip:
-        cfg["broker"] = broker_ip
-    with open(CONFIG_PATH, "w") as f:
-        f.write(json.dumps(cfg))
-    print("✅ Wi-Fi 설정 저장 완료:", cfg)
+        config["broker"] = broker_ip
+    with open(CONFIG_PATH, "w") as file:
+        file.write(json.dumps(config))
+    print("✅ Wi-Fi 설정 저장 완료:", config)
+
 
 def radio_reset():
     global wlan
     try:
-        ap = network.WLAN(network.AP_IF); ap.active(False)
+        network.WLAN(network.AP_IF).active(False)
     except Exception:
         pass
+
     if wlan is None:
         wlan = network.WLAN(network.STA_IF)
+
     try:
         wlan.disconnect()
     except Exception:
         pass
+
     try:
         wlan.active(False)
     except Exception:
         pass
+
     time.sleep_ms(300)
+
     try:
         wlan.active(True)
     except Exception:
         pass
+
     time.sleep_ms(500)
 
-def try_connect_wifi(ssid, pw, timeout_sec=20, force_reset=True):
+
+def try_connect_wifi(ssid, password, timeout_sec=20, force_reset=True):
     global wlan
-    if not ssid or not pw:
+
+    if not ssid or not password:
         return False
+
     if force_reset:
         radio_reset()
     elif wlan is None:
-        wlan = network.WLAN(network.STA_IF); wlan.active(True)
+        wlan = network.WLAN(network.STA_IF)
+        wlan.active(True)
+
     if wlan.isconnected():
-        print("✅ 이미 Wi-Fi 연결 상태:", wlan.ifconfig()); return True
+        print("✅ 이미 Wi-Fi 연결 상태:", wlan.ifconfig())
+        return True
+
     print("📡 Wi-Fi 연결 시도:", ssid)
-    wlan.connect(ssid, pw)
-    t0 = time.time()
-    while not wlan.isconnected() and (time.time()-t0 < timeout_sec):
+    wlan.connect(ssid, password)
+
+    start = time.time()
+    while not wlan.isconnected() and (time.time() - start < timeout_sec):
+        feed_wdt()
         time.sleep(0.5)
+
     if wlan.isconnected():
-        print("✅ Wi-Fi 연결 완료:", wlan.ifconfig()); return True
-    print("❌ Wi-Fi 연결 실패"); return False
+        print("✅ Wi-Fi 연결 완료:", wlan.ifconfig())
+        blink_n(3)
+        return True
+
+    print("❌ Wi-Fi 연결 실패")
+    return False
+
 
 def connect_wifi_from_config(timeout_sec=20, force_reset=True):
     global MQTT_BROKER
-    cfg = load_wifi_config()
-    if cfg:
-        ssid = cfg.get("ssid"); pw = cfg.get("password")
-        if ssid and pw and try_connect_wifi(ssid, pw, timeout_sec, force_reset):
-            MQTT_BROKER = cfg.get("broker") or DEFAULT_BROKER_IP
+
+    config = load_wifi_config()
+    if config:
+        ssid = config.get("ssid")
+        password = config.get("password")
+        if ssid and password and try_connect_wifi(ssid, password, timeout_sec, force_reset):
+            MQTT_BROKER = config.get("broker") or DEFAULT_BROKER_IP
             print("🌐 config로 Wi-Fi 연결 OK, broker =", MQTT_BROKER)
             return True
+
     if WIFI_SSID and WIFI_PASSWORD and try_connect_wifi(WIFI_SSID, WIFI_PASSWORD, timeout_sec, force_reset):
-        MQTT_BROKER = DEFAULT_BROKER_IP; return True
+        MQTT_BROKER = DEFAULT_BROKER_IP
+        return True
+
     return False
+
 
 def wifi_ensure():
     global wlan
@@ -159,302 +319,474 @@ def wifi_ensure():
         return connect_wifi_from_config(force_reset=True)
     return True
 
-def url_decode(s):
-    res=""; i=0
-    while i < len(s):
-        c=s[i]
-        if c=='+': res+=' '
-        elif c=='%' and i+2 < len(s):
-            try: res += chr(int(s[i+1:i+3],16)); i += 2
-            except Exception: res += c
-        else: res += c
+
+def url_decode(value):
+    result = ""
+    i = 0
+    while i < len(value):
+        char = value[i]
+        if char == "+":
+            result += " "
+        elif char == "%" and i + 2 < len(value):
+            try:
+                result += chr(int(value[i + 1:i + 3], 16))
+                i += 2
+            except Exception:
+                result += char
+        else:
+            result += char
         i += 1
-    return res
+    return result
+
 
 def parse_form(body):
-    out={}
-    for p in body.split('&'):
-        if '=' in p:
-            k,v=p.split('=',1); out[k]=url_decode(v)
-    return out
+    result = {}
+    for part in body.split("&"):
+        if "=" in part:
+            key, value = part.split("=", 1)
+            result[key] = url_decode(value)
+    return result
+
 
 def start_config_portal():
-    sta = network.WLAN(network.STA_IF); sta.active(False)
-    ap = network.WLAN(network.AP_IF); ap.config(essid=AP_SSID, password=AP_PW); ap.active(True)
+    network.WLAN(network.STA_IF).active(False)
+    ap = network.WLAN(network.AP_IF)
+    ap.config(essid=AP_SSID, password=AP_PW)
+    ap.active(True)
     print("📶 AP 모드 시작:", ap.ifconfig())
-    addr = socket.getaddrinfo('0.0.0.0', 80)[0][-1]
-    s = socket.socket()
-    try: s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    except Exception: pass
-    s.bind(addr); s.listen(1)
+
+    address = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
+    server = socket.socket()
+    try:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    except Exception:
+        pass
+    server.bind(address)
+    server.listen(1)
+
     while True:
-        cl, _ = s.accept(); req = cl.recv(1024)
-        try: req_str = req.decode()
-        except Exception: req_str = ""
-        if "POST /save" in req_str:
-            body = req_str.split("\r\n\r\n",1)[1] if "\r\n\r\n" in req_str else ""
+        connection, _ = server.accept()
+        request = connection.recv(1024)
+        try:
+            request_str = request.decode()
+        except Exception:
+            request_str = ""
+
+        if "POST /save" in request_str:
+            body = request_str.split("\r\n\r\n", 1)[1] if "\r\n\r\n" in request_str else ""
             form = parse_form(body)
-            ssid = form.get("ssid","").strip(); pw = form.get("pw","").strip(); broker = form.get("broker","").strip()
-            if ssid and pw:
-                save_wifi_config(ssid,pw,broker or None)
-                cl.send(HTML_SAVED.encode()); cl.close(); time.sleep(3); machine.reset()
+            ssid = form.get("ssid", "").strip()
+            password = form.get("pw", "").strip()
+            broker = form.get("broker", "").strip()
+            if ssid and password:
+                save_wifi_config(ssid, password, broker or None)
+                connection.send(HTML_SAVED.encode())
+                connection.close()
+                time.sleep(3)
+                machine.reset()
             else:
-                cl.send(HTML_FORM.encode()); cl.close()
+                connection.send(HTML_FORM.encode())
+                connection.close()
         else:
-            cl.send(HTML_FORM.encode()); cl.close()
+            connection.send(HTML_FORM.encode())
+            connection.close()
+
 
 def startup_wifi_or_portal():
-    if connect_wifi_from_config(force_reset=True): return True
-    start_config_portal(); return False
+    if connect_wifi_from_config(force_reset=True):
+        return True
+    start_config_portal()
+    return False
 
-def log(level, msg, **extra):
+
+# =========================================================
+# MQTT helpers
+# =========================================================
+def close_mqtt_client():
+    global client
     try:
-        print("[%s][%s] %s %s" % (DEVICE_ID, level, msg, extra if extra else ""))
+        if client is not None:
+            try:
+                if hasattr(client, "sock") and client.sock is not None:
+                    try:
+                        client.sock.close()
+                    except Exception:
+                        pass
+                    client.sock = None
+            except Exception:
+                pass
+            try:
+                client.disconnect()
+            except Exception:
+                pass
     except Exception:
         pass
+    client = None
+    gc.collect()
+
+
+def apply_socket_timeout():
+    global client
     try:
-        if client is None: return
-        rec = {"id": DEVICE_ID, "type": "subscriber", "level": level, "msg": msg, "ts": int(time.time())}
-        if extra: rec.update(extra)
-        client.publish(TOPIC_LOG, json.dumps(rec))
+        if client is not None and hasattr(client, "sock") and client.sock is not None:
+            client.sock.settimeout(SOCKET_TIMEOUT_SEC)
+            print("⏱️ MQTT socket timeout =", SOCKET_TIMEOUT_SEC, "sec")
+    except Exception as exc:
+        print("⚠️ socket timeout 설정 실패:", exc)
+
+
+def safe_publish(topic, payload, retain=False):
+    global publish_success_count, publish_fail_count
+    if client is None:
+        return False
+    try:
+        if isinstance(payload, dict):
+            payload = json.dumps(payload)
+        client.publish(topic, payload, retain=retain)
+        publish_success_count += 1
+        publish_fail_count = 0
+        return True
+    except Exception as exc:
+        publish_fail_count += 1
+        print("⚠️ publish 실패:", exc)
+        return False
+
+
+def publish_status(online=True, reason="heartbeat"):
+    payload = {
+        "id": DEVICE_ID,
+        "name": DEVICE_ID,
+        "type": "subscriber",
+        "status": "online" if online else "offline",
+        "reason": reason,
+        "ts": now_ts(),
+        "ip": get_ip(),
+        "reset_cause": reset_cause_name(),
+    }
+    safe_publish(TOPIC_STATUS, payload, retain=True)
+
+
+def publish_hello():
+    payload = {
+        "id": DEVICE_ID,
+        "ip": get_ip(),
+        "name": DEVICE_ID,
+        "type": "subscriber",
+        "ts": now_ts(),
+    }
+    safe_publish(TOPIC_HELLO, payload, retain=True)
+    log("info", "hello published", ip=get_ip())
+
+
+def log(level, message, **extra):
+    try:
+        print(f"[{DEVICE_ID}][{level}] {message} {extra if extra else ''}")
     except Exception:
         pass
 
-def publish_status(c, online=True):
     try:
-        c.publish(TOPIC_STATUS, json.dumps({"id": DEVICE_ID, "name": DEVICE_ID, "type": "subscriber", "status": "online" if online else "offline", "ts": int(time.time())}), retain=True)
-    except Exception as e:
-        print("⚠️ status publish 실패:", e)
+        record = {"id": DEVICE_ID, "type": "subscriber", "level": level, "msg": message, "ts": now_ts()}
+        if extra:
+            record.update(extra)
+        safe_publish(TOPIC_LOG, record, retain=False)
+    except Exception:
+        pass
 
-def publish_hello(c):
-    try:
-        ip = network.WLAN(network.STA_IF).ifconfig()[0]
-        payload = json.dumps({"id": DEVICE_ID, "ip": ip, "name": DEVICE_ID, "type": "subscriber", "ts": int(time.time())})
-        c.publish(TOPIC_HELLO, payload, retain=True)
-        log("info", "hello published", ip=ip)
-    except Exception as e:
-        print("⚠️ HELLO publish 실패:", e)
-
-# ✅ 추가: 테스트 ACK 발행
-def publish_test_ack(c, payload):
-    try:
-        if not isinstance(payload, dict):
-            return
-        if not payload.get("test_id"):
-            return
-
-        now_ms = int(time.time() * 1000)
-        t_broker_recv_ms = payload.get("t_broker_recv_ms", now_ms)
-        t_broker_publish_ms = payload.get("t_broker_publish_ms", now_ms)
-
-        ack = {
-            "test_group": payload.get("test_group", ""),
-            "test_id": payload.get("test_id", ""),
-            "scenario_id": payload.get("scenario_id", ""),
-            "trial_no": payload.get("trial_no", ""),
-            "seq": payload.get("seq", ""),
-            "event": payload.get("event", ""),
-            "priority_class": payload.get("priority_class", ""),
-            "device_id": DEVICE_ID,
-            "source_path": payload.get("source_path", "sensor->broker->neopixel"),
-            "expected_inputs": payload.get("expected_inputs", 1),
-            "received_inputs": payload.get("received_inputs", 1),
-            "expected_devices": payload.get("expected_devices", 1),
-            "activated_devices": 1,
-            "t_sent_ms": payload.get("t_sent_ms", ""),
-            "t_broker_recv_ms": t_broker_recv_ms,
-            "t_broker_publish_ms": t_broker_publish_ms,
-            "t_sink_recv_ms": now_ms,
-            "e2e_latency_ms": now_ms - int(t_broker_recv_ms),
-            "status": "received"
-        }
-        c.publish(TOPIC_TEST_ACK, json.dumps(ack), qos=0)
-        log("debug", "test ack published", seq=ack["seq"], topic=TOPIC_TEST_ACK)
-    except Exception as e:
-        log("error", "test ack publish error", error=str(e))
 
 def make_client():
-    cid = b"pico-" + ubinascii.hexlify(machine.unique_id())
-    c = MQTTClient(cid, MQTT_BROKER, port=MQTT_PORT, keepalive=KEEPALIVE)
-    will = json.dumps({"id": DEVICE_ID, "name": DEVICE_ID, "type": "subscriber", "status": "offline", "ts": int(time.time())})
-    c.set_last_will(TOPIC_STATUS, will, retain=True)
-    return c
+    client_id = b"pico-" + ubinascii.hexlify(machine.unique_id())
+    mqtt = MQTTClient(client_id, MQTT_BROKER, port=MQTT_PORT, keepalive=KEEPALIVE)
+    will = json.dumps({"id": DEVICE_ID, "name": DEVICE_ID, "type": "subscriber", "status": "offline", "ts": now_ts()})
+    mqtt.set_last_will(TOPIC_STATUS, will, retain=True)
+    return mqtt
 
-NAMED = {"red": (255,0,0), "yellow": (255,255,0), "green": (0,255,0), "blue": (0,0,255), "purple": (128,0,128), "brown": (165,42,42), "white": (255,255,255), "black": (0,0,0)}
-
-def _new_effect_token():
-    global _EFFECT_GEN
-    _EFFECT_GEN = (_EFFECT_GEN + 1) & 0x7fffffff
-    return _EFFECT_GEN
-
-def _is_current(token):
-    return token == _EFFECT_GEN
-
-def _sleep_with_token(c, seconds, token, poll=0.1):
-    end = time.ticks_add(time.ticks_ms(), int(seconds*1000))
-    while time.ticks_diff(end, time.ticks_ms()) > 0:
-        try: c.check_msg()
-        except Exception: pass
-        if not _is_current(token): return False
-        time.sleep(poll)
-    return _is_current(token)
-
-def handle_message(c, topic_b, msg_b):
-    global mood_rgb, mood_bright
-    topic = topic_b.decode() if isinstance(topic_b, bytes) else str(topic_b)
-    raw = msg_b.decode() if isinstance(msg_b, bytes) else str(msg_b)
-    log("debug", "cmd recv", topic=topic, raw=raw[:120])
-    try:
-        data = json.loads(raw) if raw and raw[0] in "{[" else {"text": raw}
-        cmd = (data.get("command") or data.get("text","")).strip()
-        sensor_id = data.get("sensor_id")
-        if topic == TOPIC_REQ:
-            publish_hello(c)
-            return
-
-        if cmd in ("fire_warning", "yellow_flash"):
-            if sensor_id == "gas_sensor_pico":
-                cmd = "hex_flash"; data["color"] = data.get("color", "#8300FD"); data["duration_ms"] = data.get("duration_ms", 5000)
-            else:
-                cmd = "hex_flash"; data["color"] = data.get("color", "#FD6A00"); data["duration_ms"] = data.get("duration_ms", 5000)
-        if cmd == "purple_blink_3s" and sensor_id == "water_level_1":
-            cmd = "hex_flash"; data["color"] = "#0045FD"; data["duration_ms"] = 5000
-        if cmd == "brown_blink_3s" and sensor_id == "doorbell_1":
-            cmd = "hex_flash"; data["color"] = "#00FD05"; data["duration_ms"] = 5000
-
-        if cmd == "set_mood":
-            _new_effect_token()
-            hex_color = (data.get("color") or "#FFFFFF").strip()
-            brightness = clamp(int(data.get("brightness", DEFAULT_BRIGHT)), 0, 255)
-            mood_rgb, mood_bright = hex_to_rgb(hex_color), brightness
-            set_all(apply_brightness(mood_rgb, mood_bright))
-            publish_test_ack(c, data)
-            return
-
-        if cmd == "hex_flash":
-            token = _new_effect_token()
-            hex_color = (data.get("color") or "#FFFFFF").strip()
-            try: rgb = hex_to_rgb(hex_color)
-            except Exception: rgb = (255,255,255)
-            duration_ms = int(data.get("duration_ms", 5000))
-            flash = apply_brightness(rgb, mood_bright)
-            base = apply_brightness(mood_rgb, mood_bright)
-            set_all(flash)
-            publish_test_ack(c, data)
-            if _sleep_with_token(c, duration_ms/1000.0, token):
-                set_all(base)
-            return
-
-        if cmd.endswith("_blink_3s"):
-            token = _new_effect_token()
-            name = cmd.replace("_blink_3s","")
-            blink = apply_brightness(NAMED.get(name, NAMED["white"]), mood_bright)
-            base = apply_brightness(mood_rgb, mood_bright)
-            publish_test_ack(c, data)
-            end = time.ticks_add(time.ticks_ms(), 3000)
-            on = False
-            while time.ticks_diff(end, time.ticks_ms()) > 0 and _is_current(token):
-                set_all(blink if on else base)
-                on = not on
-                _sleep_with_token(c, 0.25, token)
-            if _is_current(token): set_all(base)
-            return
-
-        if cmd in ("fire_confirmed", "red_blink"):
-            token = _new_effect_token()
-            red = apply_brightness(NAMED["red"], mood_bright)
-            base = apply_brightness(mood_rgb, mood_bright)
-            publish_test_ack(c, data)
-            end = time.ticks_add(time.ticks_ms(), 10000)
-            on = False
-            while time.ticks_diff(end, time.ticks_ms()) > 0 and _is_current(token):
-                set_all(red if on else base)
-                on = not on
-                _sleep_with_token(c, 0.25, token)
-            if _is_current(token): set_all(base)
-            return
-
-        if cmd in ("off","black"):
-            _new_effect_token()
-            set_all((0,0,0))
-            publish_test_ack(c, data)
-            return
-
-        log("warn","unknown cmd", cmd=cmd)
-    except Exception as e:
-        log("error","handle_message error", error=str(e))
 
 def mqtt_connect_and_subscribe():
-    global client
+    global client, publish_success_count, publish_fail_count, last_command_ms
+
     print("📡 MQTT 연결 시도 중... (broker =", MQTT_BROKER, ")")
+    close_mqtt_client()
     client = make_client()
+
     try:
-        client.set_callback(lambda t, m: handle_message(client, t, m))
+        client.set_callback(handle_message)
         client.connect()
-        publish_status(client, True)
-        publish_hello(client)
+        apply_socket_timeout()
         client.subscribe(TOPIC_CMD_THIS, qos=1)
         client.subscribe(TOPIC_CMD_ALL, qos=1)
         client.subscribe(TOPIC_REQ, qos=1)
-        log("info","mqtt connected")
+        publish_success_count = 0
+        publish_fail_count = 0
+        publish_status(True, "mqtt_connected")
+        publish_hello()
+        last_command_ms = time.ticks_ms()
+        log("info", "mqtt connected")
         return True
-    except Exception as e:
-        print("❌ MQTT 연결 실패:", repr(e))
-        try: client.disconnect()
-        except Exception: pass
-        client = None
+    except Exception as exc:
+        print("❌ MQTT 연결 실패:", exc)
+        close_mqtt_client()
         return False
 
+
+def mqtt_reconnect_with_backoff():
+    backoff = 0.5
+    for _ in range(MQTT_RECONNECT_MAX):
+        feed_wdt()
+        if not wifi_ensure():
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 5)
+            continue
+        if mqtt_connect_and_subscribe():
+            return True
+        time.sleep(backoff)
+        backoff = min(backoff * 2, 5)
+    return False
+
+
+def maybe_rotate_mqtt():
+    global publish_success_count
+    if publish_success_count >= FORCE_ROTATE_AFTER_PUBLISHES:
+        print("♻️ 정기 MQTT 회전 실행 (publish count =", publish_success_count, ")")
+        if mqtt_reconnect_with_backoff():
+            publish_success_count = 0
+
+
 def hard_recover(reason="unknown"):
-    global client, wlan
     print("♻️ 하드 복구 실행:", reason)
-    try:
-        if client: client.disconnect()
-    except Exception: pass
-    client = None
+    blink_n(4, 120, 120)
+    close_mqtt_client()
     try:
         if wlan is not None:
-            wlan.active(False); time.sleep(1); wlan.active(True); time.sleep(1)
-    except Exception: pass
-    time.sleep(2); machine.reset()
+            wlan.active(False)
+            time.sleep(1)
+            wlan.active(True)
+            time.sleep(1)
+    except Exception:
+        pass
+    time.sleep(2)
+    machine.reset()
 
+
+# =========================================================
+# Effect helpers
+# =========================================================
+def new_effect_token():
+    global _effect_generation
+    _effect_generation = (_effect_generation + 1) & 0x7FFFFFFF
+    return _effect_generation
+
+
+def is_current_effect(token):
+    return token == _effect_generation
+
+
+def sleep_with_token(seconds, token, poll=0.05):
+    end = time.ticks_add(time.ticks_ms(), int(seconds * 1000))
+    while time.ticks_diff(end, time.ticks_ms()) > 0:
+        feed_wdt()
+        try:
+            if client is not None:
+                client.check_msg()
+        except Exception:
+            pass
+        if not is_current_effect(token):
+            return False
+        time.sleep(poll)
+    return is_current_effect(token)
+
+
+def handle_hex_flash(data):
+    token = new_effect_token()
+    try:
+        rgb = hex_to_rgb((data.get("color") or "#FFFFFF").strip())
+    except Exception:
+        rgb = (255, 255, 255)
+
+    set_all(apply_brightness(rgb, mood_brightness))
+    duration_sec = int(data.get("duration_ms", 5000)) / 1000.0
+    if sleep_with_token(duration_sec, token):
+        restore_mood()
+
+
+def handle_named_blink(cmd):
+    token = new_effect_token()
+    name = cmd.replace("_blink_3s", "")
+    blink_color = apply_brightness(NAMED_COLORS.get(name, NAMED_COLORS["white"]), mood_brightness)
+    base_color = apply_brightness(mood_rgb, mood_brightness)
+    end = time.ticks_add(time.ticks_ms(), 3000)
+    on = False
+    while time.ticks_diff(end, time.ticks_ms()) > 0 and is_current_effect(token):
+        set_all(blink_color if on else base_color)
+        on = not on
+        sleep_with_token(0.25, token)
+    if is_current_effect(token):
+        restore_mood()
+
+
+def handle_red_blink(duration_ms=10000):
+    token = new_effect_token()
+    red_color = apply_brightness(NAMED_COLORS["red"], mood_brightness)
+    base_color = apply_brightness(mood_rgb, mood_brightness)
+    end = time.ticks_add(time.ticks_ms(), duration_ms)
+    on = False
+    while time.ticks_diff(end, time.ticks_ms()) > 0 and is_current_effect(token):
+        set_all(red_color if on else base_color)
+        on = not on
+        sleep_with_token(0.25, token)
+    if is_current_effect(token):
+        restore_mood()
+
+
+# =========================================================
+# Message handling
+# =========================================================
+def handle_message(topic_bytes, message_bytes):
+    global mood_rgb, mood_brightness, last_command_ms
+
+    topic = topic_bytes.decode() if isinstance(topic_bytes, bytes) else str(topic_bytes)
+    raw = message_bytes.decode() if isinstance(message_bytes, bytes) else str(message_bytes)
+    last_command_ms = time.ticks_ms()
+    log("debug", "cmd recv", topic=topic, raw=raw[:120])
+
+    try:
+        data = json.loads(raw) if raw and raw[0] in "[{" else {"text": raw}
+        cmd = (data.get("command") or data.get("text", "")).strip()
+        sensor_id = data.get("sensor_id")
+
+        if topic == TOPIC_REQ:
+            publish_hello()
+            return
+
+        if cmd in ("fire_warning", "yellow_flash"):
+            cmd = "hex_flash"
+            if sensor_id == "gas_sensor_pico":
+                data["color"] = data.get("color", "#8300FD")
+            else:
+                data["color"] = data.get("color", "#FD6A00")
+            data["duration_ms"] = data.get("duration_ms", 5000)
+
+        if cmd == "purple_blink_3s" and sensor_id == "water_level_1":
+            cmd = "hex_flash"
+            data["color"] = "#0045FD"
+            data["duration_ms"] = 5000
+
+        if cmd == "brown_blink_3s" and sensor_id == "doorbell_1":
+            cmd = "hex_flash"
+            data["color"] = "#00FD05"
+            data["duration_ms"] = 5000
+
+        if cmd == "set_mood":
+            new_effect_token()
+            mood_rgb = hex_to_rgb((data.get("color") or "#FFFFFF").strip())
+            mood_brightness = clamp(int(data.get("brightness", DEFAULT_BRIGHTNESS)), 0, 255)
+            restore_mood()
+            return
+
+        if cmd == "hex_flash":
+            handle_hex_flash(data)
+            return
+
+        if cmd.endswith("_blink_3s"):
+            handle_named_blink(cmd)
+            return
+
+        if cmd in ("fire_confirmed", "red_blink"):
+            handle_red_blink(10000)
+            return
+
+        if cmd in ("off", "black"):
+            new_effect_token()
+            set_all((0, 0, 0))
+            return
+
+        log("warn", "unknown cmd", cmd=cmd)
+    except Exception as exc:
+        log("error", "handle_message error", error=str(exc))
+
+
+# =========================================================
+# Main loop
+# =========================================================
 def main():
-    global recovery_fail_count
-    set_all(apply_brightness(mood_rgb, mood_bright))
+    global recovery_fail_count, last_command_ms
+
+    gc.collect()
+    set_led(False)
+    restore_mood()
+    blink_n(2, 100, 100)
+    time.sleep_ms(BOOT_SETTLE_MS)
+
     startup_wifi_or_portal()
     while not mqtt_connect_and_subscribe():
         time.sleep(3)
-    last_ping = time.time()
-    last_hello = time.time()
+
+    start_watchdog()
+
+    last_ping_ms = time.ticks_ms()
+    last_hello_ms = time.ticks_ms()
+    last_status_ms = time.ticks_ms()
+    last_gc_ms = time.ticks_ms()
+
     while True:
         try:
+            feed_wdt()
+            last_gc_ms = maybe_gc(last_gc_ms)
+
             if not wifi_ensure():
                 recovery_fail_count += 1
                 if recovery_fail_count >= MAX_RECOVERY_FAILS:
                     hard_recover("neopixel wifi disconnected")
-                time.sleep(2); continue
-            client.check_msg()
-            now = time.time()
-            if now - last_ping >= KEEPALIVE // 2:
-                client.ping(); last_ping = now
-            if now - last_hello >= 60:
-                publish_hello(client); last_hello = now
-            recovery_fail_count = 0
-            time.sleep(0.05)
-        except Exception as e:
-            print("❌ MQTT 오류:", e)
-            log("error","mqtt loop error", error=str(e))
-            ok = False
-            for _ in range(10):
-                if connect_wifi_from_config(force_reset=True) and mqtt_connect_and_subscribe():
-                    ok = True; break
-                time.sleep(3)
-            if ok:
+                time.sleep_ms(1000)
+                continue
+
+            if client is None:
+                if not mqtt_reconnect_with_backoff():
+                    recovery_fail_count += 1
+                    if recovery_fail_count >= MAX_RECOVERY_FAILS:
+                        hard_recover("neopixel mqtt disconnected")
+                    time.sleep_ms(1000)
+                    continue
                 recovery_fail_count = 0
-            else:
-                recovery_fail_count += 1
-                if recovery_fail_count >= MAX_RECOVERY_FAILS:
-                    hard_recover("neopixel mqtt loop stuck")
-                time.sleep(2)
+                last_ping_ms = time.ticks_ms()
+                last_hello_ms = time.ticks_ms()
+                last_status_ms = time.ticks_ms()
+
+            client.check_msg()
+            now_ms = time.ticks_ms()
+
+            if time.ticks_diff(now_ms, last_ping_ms) >= PING_INTERVAL_MS:
+                try:
+                    client.ping()
+                    last_ping_ms = now_ms
+                except Exception:
+                    close_mqtt_client()
+
+            if time.ticks_diff(now_ms, last_hello_ms) >= HELLO_INTERVAL_MS:
+                publish_hello()
+                last_hello_ms = now_ms
+
+            if time.ticks_diff(now_ms, last_status_ms) >= STATUS_HEARTBEAT_MS:
+                publish_status(True, "heartbeat")
+                last_status_ms = now_ms
+
+            if publish_fail_count >= PUBLISH_FAIL_MAX:
+                hard_recover("neopixel publish failures")
+
+            if time.ticks_diff(now_ms, last_command_ms) >= NO_MSG_REFRESH_MS:
+                publish_hello()
+                last_command_ms = now_ms
+
+            maybe_rotate_mqtt()
+            recovery_fail_count = 0
+            time.sleep_ms(MAIN_LOOP_SLEEP_MS)
+        except Exception as exc:
+            print("❌ MQTT 오류:", exc)
+            log("error", "mqtt loop error", error=str(exc))
+            close_mqtt_client()
+            recovery_fail_count += 1
+            if recovery_fail_count >= MAX_RECOVERY_FAILS:
+                hard_recover("neopixel mqtt loop stuck")
+            time.sleep_ms(2000)
+
 
 main()
