@@ -1,13 +1,18 @@
-# gas sensor - final stable for SR test
-import machine, time, network, ujson, gc
-import socket, os
-from simple import MQTTClient   # umqtt.simple
+# gas sensor - product final
+import machine
+import time
+import network
+import ujson
+import gc
+import socket
+import os
+from simple import MQTTClient
 
-# ========= 하드웨어/네트워크 설정 =========
+# ========= Hardware / Network =========
 GAS_SENSOR_PIN = 26
-gas_sensor = machine.ADC(GAS_SENSOR_PIN)
-
 LED_PIN = 28
+
+gas_sensor = machine.ADC(GAS_SENSOR_PIN)
 led = machine.Pin(LED_PIN, machine.Pin.OUT)
 
 try:
@@ -17,82 +22,67 @@ except Exception:
 
 WIFI_SSID = ""
 WIFI_PASSWORD = ""
-
-CONFIG_PATH       = "wifi_config.json"
+CONFIG_PATH = "wifi_config.json"
 DEFAULT_BROKER_IP = "192.168.0.33"
 
-# ========= MQTT 정보 =========
-MQTT_BROKER    = DEFAULT_BROKER_IP
-MQTT_TOPIC     = "gas/sensor"
+# ========= MQTT =========
+MQTT_BROKER = DEFAULT_BROKER_IP
+MQTT_TOPIC = "gas/sensor"
 MQTT_CLIENT_ID = "gas_sensor_pico"
+STATUS_TOPIC = "interfaceui/status/publisher/" + MQTT_CLIENT_ID
 
-STATUS_TOPIC   = "interfaceui/status/publisher/" + MQTT_CLIENT_ID
-
-# ========= 테스트 기본값 =========
-TEST_GROUP   = "SR"
-TEST_ID      = "SR-01A"
-SCENARIO_ID  = "gas_to_broker"
-TRIAL_NO     = 1
 PRIORITY_EMERGENCY = "emergency"
-PRIORITY_ROUTINE   = "routine"
-SEQ = 0
+PRIORITY_ROUTINE = "routine"
 
-# ========= 동작 파라미터 =========
-KEEPALIVE_SEC        = 60
-PING_INTERVAL_MS     = 30_000
-LED_BLINK_MS         = 500
+# ========= Sensor / Publish policy =========
+KEEPALIVE_SEC = 60
+PING_INTERVAL_MS = 30_000
+LED_BLINK_MS = 500
 
-WARMUP_MS            = 20_000
-WARMUP_LOG_MS        = 10_000
-WARMUP_LED_MS        = 120
-WARMUP_STATUS_MS     = 30_000
+WARMUP_MS = 20_000
+WARMUP_LOG_MS = 10_000
+WARMUP_LED_MS = 120
+WARMUP_STATUS_MS = 30_000
 
-FILTER_SAMPLES       = 7
-FILTER_DELAY_MS      = 20
-AVG_WINDOW           = 5
+FILTER_SAMPLES = 7
+FILTER_DELAY_MS = 20
+AVG_WINDOW = 5
 
-THRESHOLD_HIGH       = 30_000
-THRESHOLD_LOW        = 28_000
+THRESHOLD_HIGH = 30_000
+THRESHOLD_LOW = 28_000
 
-HEARTBEAT_MS         = 10_000
-STATUS_HEARTBEAT_MS  = 60_000
-PUBLISH_GAP_MS       = 120
+# Gas sensor stays on 10-second publish to reduce transport load
+HEARTBEAT_MS = 5_000
+STATUS_HEARTBEAT_MS = 60_000
+PUBLISH_GAP_MS = 120
 
-FAULT_MIN_VALID      = 50
-FAULT_MAX_VALID      = 65_000
-FAULT_CONSEC_BAD     = 5
-FAULT_CONSEC_GOOD    = 3
-FAULT_LOG_MS         = 10_000
+FAULT_MIN_VALID = 50
+FAULT_MAX_VALID = 65_000
+FAULT_CONSEC_BAD = 5
+FAULT_CONSEC_GOOD = 3
+FAULT_LOG_MS = 10_000
 
-WIFI_RETRY_MAX       = 15
-MQTT_RECONNECT_MAX   = 10
-MAX_RECOVERY_FAILS   = 5
+# ========= Stability =========
+WIFI_RETRY_MAX = 15
+MQTT_RECONNECT_MAX = 10
+MAX_RECOVERY_FAILS = 5
+MAX_PUBLISH_FAIL_STREAK = 3
+MAX_PUBLISH_SILENCE_MS = 180_000
 
-GC_INTERVAL_MS       = 20_000
+GC_INTERVAL_MS = 20_000
+WDT_TIMEOUT_MS = 8_000
+SOCKET_TIMEOUT_SEC = 3
 
-# Pico W에서 실제 동작 가능한 값
-WDT_TIMEOUT_MS       = 8000
-
-SOCKET_TIMEOUT_SEC   = 3
-DEBUG_PUBLISH        = True
-
-# SR 테스트 중에는 status heartbeat를 끄는 것이 안전
+# Product mode: keep quiet unless debugging
+DEBUG_PUBLISH = False
 ENABLE_STATUS_HEARTBEAT = False
 
-# 같은 누적 publish 지점에서 무너지는 패턴 완화
-FORCE_ROTATE_AFTER_PUBLISHES = 40
+# Avoid too-frequent forced reconnects
+FORCE_ROTATE_AFTER_PUBLISHES = 120
 
-wlan   = None
-client = None
-wdt    = None
-
-recovery_fail_count = 0
-publish_success_count = 0
-BOOT_TICKS_MS = time.ticks_ms()
-
-# ========= AP 모드 =========
+# ========= AP Portal =========
 AP_SSID = "gas_sensor_setup"
-AP_PW   = "123456789"
+AP_PW = "123456789"
 
 HTML_FORM = """\
 HTTP/1.1 200 OK\r
@@ -105,7 +95,7 @@ Content-Type: text/html; charset=utf-8\r
 <h2>Wi-Fi / MQTT 설정</h2>
 <form method="POST" action="/save">
   SSID: <input name="ssid"><br>
-  PW:   <input name="pw" type="password"><br>
+  PW: <input name="pw" type="password"><br>
   Broker IP: <input name="broker" value="%s"><br>
   <button type="submit">저장</button>
 </form>
@@ -117,38 +107,52 @@ HTML_SAVED = """\
 HTTP/1.1 200 OK\r
 Content-Type: text/html; charset=utf-8\r
 \r
-<html><body>
-<p>저장되었습니다. 3초 후 재부팅합니다.</p>
-</body></html>
+<html><body><p>저장되었습니다. 3초 후 재부팅합니다.</p></body></html>
 """
 
-# ========= 유틸 =========
+# ========= Globals =========
+wlan = None
+client = None
+wdt = None
+
+recovery_fail_count = 0
+publish_success_count = 0
+publish_fail_streak = 0
+last_publish_ok_ms = time.ticks_ms()
+
+BOOT_TICKS_MS = time.ticks_ms()
+filter_history = []
+
+# ========= Common helpers =========
 def now_str():
-    t = time.localtime()
-    return "%04d-%02d-%02d %02d:%02d:%02d" % t[:6]
+    return "%04d-%02d-%02d %02d:%02d:%02d" % time.localtime()[:6]
 
 def uptime_ms():
     return time.ticks_diff(time.ticks_ms(), BOOT_TICKS_MS)
 
-def next_seq():
-    global SEQ
-    SEQ += 1
-    return SEQ
-
 def reset_cause_name():
     cause = machine.reset_cause()
     mapping = {}
-    if hasattr(machine, "PWRON_RESET"):
-        mapping[machine.PWRON_RESET] = "PWRON_RESET"
-    if hasattr(machine, "HARD_RESET"):
-        mapping[machine.HARD_RESET] = "HARD_RESET"
-    if hasattr(machine, "WDT_RESET"):
-        mapping[machine.WDT_RESET] = "WDT_RESET"
-    if hasattr(machine, "DEEPSLEEP_RESET"):
-        mapping[machine.DEEPSLEEP_RESET] = "DEEPSLEEP_RESET"
-    if hasattr(machine, "SOFT_RESET"):
-        mapping[machine.SOFT_RESET] = "SOFT_RESET"
+    for name in ("PWRON_RESET", "HARD_RESET", "WDT_RESET", "DEEPSLEEP_RESET", "SOFT_RESET"):
+        if hasattr(machine, name):
+            mapping[getattr(machine, name)] = name
     return mapping.get(cause, str(cause))
+
+def set_led(v):
+    val = 1 if v else 0
+    led.value(val)
+    if onboard_led is not None:
+        onboard_led.value(val)
+
+def blink_once(on_ms=80, off_ms=80):
+    set_led(True)
+    time.sleep_ms(on_ms)
+    set_led(False)
+    time.sleep_ms(off_ms)
+
+def blink_n(n, on_ms=80, off_ms=80):
+    for _ in range(n):
+        blink_once(on_ms, off_ms)
 
 def start_watchdog():
     global wdt
@@ -179,40 +183,6 @@ def short_gap(ms=PUBLISH_GAP_MS):
     time.sleep_ms(ms)
     feed_wdt()
 
-def build_test_fields(priority_class):
-    return {
-        "test_group": TEST_GROUP,
-        "test_id": TEST_ID,
-        "scenario_id": SCENARIO_ID,
-        "trial_no": TRIAL_NO,
-        "seq": next_seq(),
-        "t_sent_ms": int(uptime_ms()),
-        "publisher_clock": "monotonic_uptime_ms",
-        "publisher_reset_cause": reset_cause_name(),
-        "priority_class": priority_class,
-        "source_path": "gas_sensor->broker",
-        "expected_inputs": 1,
-        "received_inputs": 1,
-        "expected_devices": 1,
-        "activated_devices": 0
-    }
-
-def set_led(v):
-    val = 1 if v else 0
-    led.value(val)
-    if onboard_led is not None:
-        onboard_led.value(val)
-
-def blink_once(on_ms=80, off_ms=80):
-    set_led(True)
-    time.sleep_ms(on_ms)
-    set_led(False)
-    time.sleep_ms(off_ms)
-
-def blink_n(n, on_ms=80, off_ms=80):
-    for _ in range(n):
-        blink_once(on_ms, off_ms)
-
 def get_ip():
     try:
         if wlan is not None and wlan.isconnected():
@@ -221,6 +191,23 @@ def get_ip():
         pass
     return ""
 
+def record_publish_success():
+    global publish_success_count, publish_fail_streak, last_publish_ok_ms
+    publish_success_count += 1
+    publish_fail_streak = 0
+    last_publish_ok_ms = time.ticks_ms()
+
+def record_publish_failure():
+    global publish_fail_streak
+    publish_fail_streak += 1
+    if publish_fail_streak >= MAX_PUBLISH_FAIL_STREAK:
+        hard_recover("repeated publish failures")
+
+def check_publish_silence(now_ms):
+    if time.ticks_diff(now_ms, last_publish_ok_ms) >= MAX_PUBLISH_SILENCE_MS:
+        hard_recover("publish silence timeout")
+
+# ========= Wi-Fi config / portal =========
 def load_wifi_config():
     if CONFIG_PATH not in os.listdir():
         return None
@@ -235,41 +222,36 @@ def save_wifi_config(ssid, pw, broker_ip=None):
     cfg = {"ssid": ssid, "password": pw}
     if broker_ip:
         cfg["broker"] = broker_ip
-    try:
-        with open(CONFIG_PATH, "w") as f:
-            f.write(ujson.dumps(cfg))
-        print("✅ Wi-Fi 설정 저장 완료:", cfg)
-    except Exception as e:
-        print("❌ config 저장 실패:", e)
+    with open(CONFIG_PATH, "w") as f:
+        f.write(ujson.dumps(cfg))
+    print("✅ Wi-Fi 설정 저장 완료:", cfg)
 
 def url_decode(s):
-    res = ""
+    out = ""
     i = 0
     while i < len(s):
         c = s[i]
-        if c == '+':
-            res += ' '
-        elif c == '%' and i + 2 < len(s):
+        if c == "+":
+            out += " "
+        elif c == "%" and i + 2 < len(s):
             try:
-                res += chr(int(s[i + 1:i + 3], 16))
+                out += chr(int(s[i + 1:i + 3], 16))
                 i += 2
             except Exception:
-                res += c
+                out += c
         else:
-            res += c
+            out += c
         i += 1
-    return res
+    return out
 
 def parse_form(body):
     out = {}
-    parts = body.split('&')
-    for p in parts:
-        if '=' in p:
-            k, v = p.split('=', 1)
+    for p in body.split("&"):
+        if "=" in p:
+            k, v = p.split("=", 1)
             out[k] = url_decode(v)
     return out
 
-# ========= Wi-Fi =========
 def reset_wifi_interface():
     global wlan
     try:
@@ -286,11 +268,9 @@ def try_connect_wifi(ssid, pw):
     global wlan
 
     if not ssid or not pw:
-        print("⚠️ SSID 또는 PW 없음")
         return False
 
-    ap = network.WLAN(network.AP_IF)
-    ap.active(False)
+    network.WLAN(network.AP_IF).active(False)
 
     if wlan is None:
         wlan = network.WLAN(network.STA_IF)
@@ -325,47 +305,31 @@ def connect_wifi_from_config():
     cfg = load_wifi_config()
     if cfg:
         ssid = cfg.get("ssid")
-        pw   = cfg.get("password")
-        if ssid and pw:
-            if try_connect_wifi(ssid, pw):
-                broker = cfg.get("broker")
-                MQTT_BROKER = broker or DEFAULT_BROKER_IP
-                print("🌐 config로 Wi-Fi 연결 OK, broker =", MQTT_BROKER)
-                return True
-
-    if WIFI_SSID and WIFI_PASSWORD:
-        if try_connect_wifi(WIFI_SSID, WIFI_PASSWORD):
-            MQTT_BROKER = DEFAULT_BROKER_IP
-            print("🌐 기본 설정으로 연결, broker =", MQTT_BROKER)
+        pw = cfg.get("password")
+        if ssid and pw and try_connect_wifi(ssid, pw):
+            MQTT_BROKER = cfg.get("broker") or DEFAULT_BROKER_IP
+            print("🌐 config로 Wi-Fi 연결 OK, broker =", MQTT_BROKER)
             return True
+
+    if WIFI_SSID and WIFI_PASSWORD and try_connect_wifi(WIFI_SSID, WIFI_PASSWORD):
+        MQTT_BROKER = DEFAULT_BROKER_IP
+        return True
 
     return False
 
-def wifi_connect():
-    return connect_wifi_from_config()
-
 def wifi_ensure():
-    try:
-        if wlan is None or (not wlan.isconnected()):
-            print("⚠️ Wi-Fi 미연결 감지 → 재연결")
-            if not wifi_connect():
-                print("⚠️ Wi-Fi 미연결 상태")
-                return False
-    except Exception as e:
-        print("⚠️ wifi_ensure 예외:", e)
-        return False
+    if wlan is None or (not wlan.isconnected()):
+        print("⚠️ Wi-Fi 미연결 감지 → 재연결")
+        return connect_wifi_from_config()
     return True
 
-# ========= AP 포털 =========
 def start_config_portal():
-    sta = network.WLAN(network.STA_IF)
-    sta.active(False)
+    network.WLAN(network.STA_IF).active(False)
 
     ap = network.WLAN(network.AP_IF)
     ap.config(essid=AP_SSID, password=AP_PW)
     ap.active(True)
     print("📶 AP 모드 시작:", ap.ifconfig())
-    print("➡ 폰에서", AP_SSID, "접속 후 브라우저에서 http://192.168.4.1 열기")
 
     addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
     s = socket.socket()
@@ -386,11 +350,10 @@ def start_config_portal():
             req_str = ""
 
         if "POST /save" in req_str:
-            parts = req_str.split("\r\n\r\n", 1)
-            body = parts[1] if len(parts) > 1 else ""
+            body = req_str.split("\r\n\r\n", 1)[1] if "\r\n\r\n" in req_str else ""
             form = parse_form(body)
-            ssid   = form.get("ssid", "").strip()
-            pw     = form.get("pw", "").strip()
+            ssid = form.get("ssid", "").strip()
+            pw = form.get("pw", "").strip()
             broker = form.get("broker", "").strip()
 
             if ssid and pw:
@@ -407,7 +370,7 @@ def start_config_portal():
             cl.close()
 
 def startup_wifi_or_portal():
-    if wifi_connect():
+    if connect_wifi_from_config():
         return True
     print("⚠️ Wi-Fi 접속 실패 → AP 모드 진입")
     start_config_portal()
@@ -439,6 +402,7 @@ def close_mqtt_client():
     gc.collect()
 
 def apply_socket_timeout():
+    global client
     try:
         if client is not None and hasattr(client, "sock") and client.sock is not None:
             client.sock.settimeout(SOCKET_TIMEOUT_SEC)
@@ -455,15 +419,11 @@ def mqtt_connect():
         client = MQTTClient(MQTT_CLIENT_ID, MQTT_BROKER, keepalive=KEEPALIVE_SEC)
         client.connect()
         apply_socket_timeout()
-
         publish_success_count = 0
 
         print("✅ MQTT 연결 완료 (broker =", MQTT_BROKER, ")")
         blink_n(5)
-
-        ok = publish_device_status(state="online", value=None, reason="mqtt_connected")
-        if not ok:
-            print("⚠️ online status 발행 실패")
+        publish_device_status(state="online", value=None, reason="mqtt_connected")
         return True
 
     except Exception as e:
@@ -492,20 +452,15 @@ def mqtt_reconnect_with_backoff():
         gc.collect()
         reset_wifi_interface()
 
-        ok_wifi = wifi_ensure()
-        if not ok_wifi:
+        if not wifi_ensure():
             time.sleep(backoff)
             backoff = min(backoff * 2, 5)
             continue
 
-        try:
-            if mqtt_connect():
-                print("✅ MQTT 재연결 성공")
-                return True
-        except Exception as e:
-            print("❌ MQTT 재연결 중 예외:", e)
+        if mqtt_connect():
+            print("✅ MQTT 재연결 성공")
+            return True
 
-        gc.collect()
         time.sleep(backoff)
         backoff = min(backoff * 2, 5)
 
@@ -516,8 +471,8 @@ def maybe_rotate_mqtt():
     global publish_success_count
     if publish_success_count >= FORCE_ROTATE_AFTER_PUBLISHES:
         print("♻️ 정기 MQTT 회전 실행 (publish count =", publish_success_count, ")")
-        mqtt_reconnect_with_backoff()
-        publish_success_count = 0
+        if mqtt_reconnect_with_backoff():
+            publish_success_count = 0
 
 def hard_recover(reason="unknown"):
     print("♻️ 하드 복구 실행:", reason)
@@ -528,8 +483,6 @@ def hard_recover(reason="unknown"):
     machine.reset()
 
 def publish_json(topic, obj):
-    global publish_success_count
-
     msg = ujson.dumps(obj)
     if isinstance(msg, str):
         msg = msg.encode()
@@ -539,15 +492,18 @@ def publish_json(topic, obj):
     for attempt in range(4):
         feed_wdt()
 
-        if client is None:
-            if not mqtt_reconnect_with_backoff():
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 5)
-                continue
+        if not wifi_ensure():
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 5)
+            continue
+
+        if client is None and not mqtt_reconnect_with_backoff():
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 5)
+            continue
 
         try:
             gc.collect()
-
             if DEBUG_PUBLISH:
                 print("➡️ publish start:", topic, "try=", attempt + 1, "len=", len(msg), "free=", gc.mem_free())
 
@@ -556,22 +512,21 @@ def publish_json(topic, obj):
             if DEBUG_PUBLISH:
                 print("✅ publish done :", topic)
 
-            publish_success_count += 1
+            record_publish_success()
             maybe_rotate_mqtt()
             return True
 
         except Exception as e:
-            print("❗ publish 실패[%d]:" % (attempt + 1), e, "(free=", gc.mem_free(), ")")
-
+            print("❗ publish 실패[%d]:" % (attempt + 1), e)
             close_mqtt_client()
             gc.collect()
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 5)
 
-            if not mqtt_reconnect_with_backoff():
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 5)
-
+    record_publish_failure()
     return False
 
+# ========= Payload builders =========
 def publish_device_status(state="normal", value=None, reason="heartbeat"):
     payload = {
         "id": MQTT_CLIENT_ID,
@@ -586,7 +541,7 @@ def publish_device_status(state="normal", value=None, reason="heartbeat"):
         "reason": reason,
         "ts": now_str(),
         "publisher_uptime_ms": int(uptime_ms()),
-        "publisher_reset_cause": reset_cause_name()
+        "publisher_reset_cause": reset_cause_name(),
     }
     return publish_json(STATUS_TOPIC, payload)
 
@@ -601,16 +556,15 @@ def send_status(value, is_fire, reason="heartbeat", raw_value=None, median_value
         "reason": reason,
         "timestamp": now_str(),
         "publisher_uptime_ms": int(uptime_ms()),
-        "publisher_reset_cause": reset_cause_name()
+        "publisher_reset_cause": reset_cause_name(),
+        "priority_class": PRIORITY_EMERGENCY if is_fire else PRIORITY_ROUTINE,
     }
-
-    payload.update(build_test_fields(PRIORITY_EMERGENCY if is_fire else PRIORITY_ROUTINE))
 
     print(
         "📤 상태 전송:",
         "🔥 화재 감지!" if is_fire else "✅ 정상",
-        "(filtered=%d, raw=%s, median=%s, reason=%s, seq=%d)" %
-        (int(value), str(raw_value), str(median_value), reason, payload["seq"])
+        "(filtered=%d, raw=%s, median=%s, reason=%s)" %
+        (int(value), str(raw_value), str(median_value), reason)
     )
 
     blink_once(40, 40)
@@ -619,9 +573,7 @@ def send_status(value, is_fire, reason="heartbeat", raw_value=None, median_value
         print("❌ 상태 publish 최종 실패")
     return ok
 
-# ========= 필터 =========
-filter_history = []
-
+# ========= Sensor filtering =========
 def read_median_sample():
     vals = []
     for _ in range(FILTER_SAMPLES):
@@ -642,7 +594,7 @@ def read_filtered_adc():
     avg_v = sum(filter_history) // len(filter_history)
     return raw, median_v, avg_v
 
-# ========= 메인 =========
+# ========= Main loop =========
 def run_loop():
     global recovery_fail_count
 
@@ -660,7 +612,6 @@ def run_loop():
     startup_wifi_or_portal()
 
     while not mqtt_connect():
-        print("❌ 초기 MQTT 연결 실패, 5초 후 재시도")
         time.sleep(5)
 
     start_watchdog()
@@ -689,9 +640,9 @@ def run_loop():
         feed_wdt()
         now = time.ticks_ms()
         t_last_gc = maybe_gc(t_last_gc)
+        check_publish_silence(now)
 
         if time.ticks_diff(now, t_ping) >= PING_INTERVAL_MS:
-            print("🔎 keepalive check")
             ok_wifi = wifi_ensure()
             ok_mqtt = mqtt_ping() if ok_wifi else False
 
@@ -699,7 +650,6 @@ def run_loop():
                 if not mqtt_reconnect_with_backoff():
                     recovery_fail_count += 1
                     print("⚠️ 복구 실패 누적:", recovery_fail_count)
-                    blink_once(200, 200)
                     if recovery_fail_count >= MAX_RECOVERY_FAILS:
                         hard_recover("gas wifi/mqtt stuck")
                 else:
@@ -709,7 +659,6 @@ def run_loop():
 
             t_ping = now
 
-        # 예열 구간
         if time.ticks_diff(now, boot_ms) < WARMUP_MS:
             if time.ticks_diff(now, t_led) >= WARMUP_LED_MS:
                 led_state = not led_state
@@ -722,15 +671,12 @@ def run_loop():
                 t_last_warmup_log = now
 
             if time.ticks_diff(now, t_last_status) >= WARMUP_STATUS_MS:
-                ok = publish_device_status(state="warming_up", value=None, reason="heartbeat")
-                if not ok:
-                    print("⚠️ warming_up status publish 실패")
+                publish_device_status(state="warming_up", value=None, reason="heartbeat")
                 t_last_status = now
 
-            time.sleep(0.05)
+            time.sleep_ms(50)
             continue
 
-        # 평상시 LED 점멸
         if time.ticks_diff(now, t_led) >= LED_BLINK_MS:
             led_state = not led_state
             set_led(led_state)
@@ -738,7 +684,7 @@ def run_loop():
 
         raw_value, median_value, gas_value = read_filtered_adc()
 
-        # 센서 fault 감지
+        # Fault detection
         if gas_value <= FAULT_MIN_VALID or gas_value >= FAULT_MAX_VALID:
             fault_bad_count += 1
             fault_good_count = 0
@@ -756,22 +702,19 @@ def run_loop():
 
         if fault_active:
             if time.ticks_diff(now, t_last_fault_log) >= FAULT_LOG_MS:
-                print(
-                    "⚠️ 센서 이상 상태 유지 중...",
-                    "(filtered=%d, raw=%d, median=%d)" % (gas_value, raw_value, median_value)
-                )
+                print("⚠️ 센서 이상 상태 유지 중...",
+                      "(filtered=%d, raw=%d, median=%d)" %
+                      (gas_value, raw_value, median_value))
                 t_last_fault_log = now
 
             if ENABLE_STATUS_HEARTBEAT and time.ticks_diff(now, t_last_status) >= STATUS_HEARTBEAT_MS:
-                ok = publish_device_status(state="fault", value=gas_value, reason="heartbeat")
-                if not ok:
-                    print("⚠️ fault status publish 실패")
+                publish_device_status(state="fault", value=gas_value, reason="heartbeat")
                 t_last_status = now
 
-            time.sleep(0.1)
+            time.sleep_ms(100)
             continue
 
-        # 히스테리시스
+        # Hysteresis
         if current_fire_state is None:
             current_fire_state = (gas_value >= THRESHOLD_HIGH)
         else:
@@ -782,47 +725,32 @@ def run_loop():
                 if gas_value >= THRESHOLD_HIGH:
                     current_fire_state = True
 
-        # 상태 변화 시: 센서 publish + status publish
         if last_sent_state is None or current_fire_state != last_sent_state:
-            ok1 = send_status(gas_value, current_fire_state, "state_change", raw_value, median_value)
-
+            send_status(gas_value, current_fire_state, "state_change", raw_value, median_value)
             short_gap()
-
-            ok2 = publish_device_status(
+            publish_device_status(
                 state="alarm" if current_fire_state else "normal",
                 value=gas_value,
                 reason="state_change"
             )
-
-            if not ok1:
-                print("⚠️ state_change sensor publish 실패")
-            if not ok2:
-                print("⚠️ state_change status publish 실패")
-
             last_sent_state = current_fire_state
             t_last_report = now
             t_last_status = now
 
-        # 센서 heartbeat
         elif time.ticks_diff(now, t_last_report) >= HEARTBEAT_MS:
-            ok = send_status(gas_value, current_fire_state, "heartbeat", raw_value, median_value)
-            if not ok:
-                print("⚠️ heartbeat sensor publish 실패")
+            send_status(gas_value, current_fire_state, "heartbeat", raw_value, median_value)
             t_last_report = now
 
-        # status heartbeat는 기본 OFF
         if ENABLE_STATUS_HEARTBEAT and time.ticks_diff(now, t_last_status) >= STATUS_HEARTBEAT_MS:
             short_gap()
-            ok = publish_device_status(
+            publish_device_status(
                 state="alarm" if current_fire_state else "normal",
                 value=gas_value,
                 reason="heartbeat"
             )
-            if not ok:
-                print("⚠️ heartbeat status publish 실패")
             t_last_status = now
 
-        time.sleep(0.1)
+        time.sleep_ms(100)
 
 def main():
     while True:
@@ -832,10 +760,8 @@ def main():
             print("💥 main loop 예외:", e)
             close_mqtt_client()
             gc.collect()
-            try:
-                time.sleep(2)
-            except Exception:
-                pass
+            time.sleep(2)
             machine.reset()
 
 main()
+
