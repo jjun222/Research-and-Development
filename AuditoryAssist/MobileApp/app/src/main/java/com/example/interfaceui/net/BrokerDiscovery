@@ -1,0 +1,144 @@
+package com.example.interfaceui.net
+
+import org.json.JSONObject
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
+import java.net.NetworkInterface
+import java.util.Collections
+
+object BrokerDiscovery {
+    private const val DISCOVERY_PORT = 30303
+    private const val DISCOVERY_MESSAGE = "MQTT_DISCOVER"
+
+    fun discover(
+        timeoutMs: Int = 1500,
+        callback: (BrokerInfo?) -> Unit
+    ) {
+        Thread {
+            callback(discoverFirstBlocking(timeoutMs))
+        }.start()
+    }
+
+    fun discoverAll(
+        timeoutMs: Int = 1500,
+        callback: (List<BrokerInfo>) -> Unit
+    ) {
+        Thread {
+            callback(discoverAllBlocking(timeoutMs))
+        }.start()
+    }
+
+    private fun discoverFirstBlocking(timeoutMs: Int): BrokerInfo? {
+        return discoverAllBlocking(timeoutMs).firstOrNull()
+    }
+
+    private fun discoverAllBlocking(timeoutMs: Int): List<BrokerInfo> {
+        val results = linkedMapOf<String, BrokerInfo>()
+
+        val socket = DatagramSocket().apply {
+            broadcast = true
+            soTimeout = 250
+            reuseAddress = true
+        }
+
+        try {
+            val probe = DISCOVERY_MESSAGE.toByteArray(Charsets.UTF_8)
+
+            val targets = linkedSetOf<InetAddress>()
+            runCatching { targets.add(InetAddress.getByName("255.255.255.255")) }
+            targets.addAll(getBroadcastAddresses())
+
+            for (addr in targets) {
+                runCatching {
+                    val packet = DatagramPacket(probe, probe.size, addr, DISCOVERY_PORT)
+                    socket.send(packet)
+                }
+            }
+
+            val deadline = System.currentTimeMillis() + timeoutMs
+            val buf = ByteArray(1024)
+
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    val resp = DatagramPacket(buf, buf.size)
+                    socket.receive(resp)
+
+                    val body = String(resp.data, 0, resp.length, Charsets.UTF_8)
+                    val broker = parseResponse(body, resp.address.hostAddress) ?: continue
+                    results[broker.serverUri] = broker
+                } catch (_: Exception) {
+                    // timeout / parse 실패는 무시
+                }
+            }
+        } finally {
+            socket.close()
+        }
+
+        return results.values.sortedBy { it.serverUri }
+    }
+
+    private fun parseResponse(body: String, responderIp: String): BrokerInfo? {
+        // JSON 응답 대응
+        try {
+            val json = JSONObject(body)
+            val ip = json.optString("ip").ifBlank { responderIp }
+            val port = json.optInt("port", 1883)
+            val name = json.optString("name").ifBlank { null }
+
+            return BrokerInfo(
+                ip = ip,
+                port = port,
+                name = name,
+                responderIp = responderIp
+            )
+        } catch (_: Exception) {
+        }
+
+        // "192.168.x.x:1883" 형태 대응
+        return try {
+            val text = body.trim()
+            if (text.contains(":")) {
+                val parts = text.split(":")
+                val ip = parts.getOrNull(0)?.trim().orEmpty()
+                val port = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: 1883
+
+                if (ip.isNotBlank()) {
+                    BrokerInfo(
+                        ip = ip,
+                        port = port,
+                        responderIp = responderIp
+                    )
+                } else {
+                    null
+                }
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun getBroadcastAddresses(): Set<InetAddress> {
+        val out = linkedSetOf<InetAddress>()
+
+        val interfaces = try {
+            Collections.list(NetworkInterface.getNetworkInterfaces())
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        interfaces.forEach { ni ->
+            try {
+                if (!ni.isUp || ni.isLoopback) return@forEach
+                ni.interfaceAddresses.forEach { ia ->
+                    ia.broadcast?.let { out.add(it) }
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        return out
+    }
+}
