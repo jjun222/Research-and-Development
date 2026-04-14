@@ -1,12 +1,18 @@
-# gas sensor - product final
-import machine
-import time
-import network
-import ujson
 import gc
-import socket
+import machine
+import network
 import os
+import socket
+import time
+import ujson
 from simple import MQTTClient
+
+# =========================
+# Gas sensor MQ5 (product final, cold-boot stabilized)
+# - Cold boot power-settle delay before Wi-Fi start
+# - Wi-Fi connect tries up to 30 checks before AP mode
+# - Keeps WDT / reconnect / AP provisioning / publish protection
+# =========================
 
 # ========= Hardware / Network =========
 GAS_SENSOR_PIN = 26
@@ -31,10 +37,10 @@ MQTT_TOPIC = "gas/sensor"
 MQTT_CLIENT_ID = "gas_sensor_pico"
 STATUS_TOPIC = "interfaceui/status/publisher/" + MQTT_CLIENT_ID
 
+# ========= Sensor / Publish policy =========
 PRIORITY_EMERGENCY = "emergency"
 PRIORITY_ROUTINE = "routine"
 
-# ========= Sensor / Publish policy =========
 KEEPALIVE_SEC = 60
 PING_INTERVAL_MS = 30_000
 LED_BLINK_MS = 500
@@ -51,7 +57,6 @@ AVG_WINDOW = 5
 THRESHOLD_HIGH = 30_000
 THRESHOLD_LOW = 28_000
 
-# Gas sensor stays on 10-second publish to reduce transport load
 HEARTBEAT_MS = 5_000
 STATUS_HEARTBEAT_MS = 60_000
 PUBLISH_GAP_MS = 120
@@ -62,23 +67,28 @@ FAULT_CONSEC_BAD = 5
 FAULT_CONSEC_GOOD = 3
 FAULT_LOG_MS = 10_000
 
-# ========= Stability =========
-WIFI_RETRY_MAX = 15
+# ========= Cold boot / Stability =========
+# 30 checks * 0.5 sec = about 15 sec before giving up to AP mode
+WIFI_RETRY_MAX = 30
+WIFI_RETRY_WAIT_MS = 500
+
 MQTT_RECONNECT_MAX = 10
 MAX_RECOVERY_FAILS = 5
 MAX_PUBLISH_FAIL_STREAK = 3
 MAX_PUBLISH_SILENCE_MS = 180_000
 
-GC_INTERVAL_MS = 20_000
+# Cold boot stabilization for UPS / power-only boot
+COLD_BOOT_SETTLE_MS = 12_000
+SOFT_BOOT_SETTLE_MS = 3_000
+WIFI_POST_RESET_WAIT_MS = 1_500
+POST_WIFI_CONNECT_SETTLE_MS = 1_000
+
+GC_INTERVAL_MS = 10_000
 WDT_TIMEOUT_MS = 8_000
 SOCKET_TIMEOUT_SEC = 3
 
-# Product mode: keep quiet unless debugging
-DEBUG_PUBLISH = False
-ENABLE_STATUS_HEARTBEAT = False
-
-# Avoid too-frequent forced reconnects
 FORCE_ROTATE_AFTER_PUBLISHES = 120
+DEBUG_PUBLISH = False
 
 # ========= AP Portal =========
 AP_SSID = "gas_sensor_setup"
@@ -123,12 +133,15 @@ last_publish_ok_ms = time.ticks_ms()
 BOOT_TICKS_MS = time.ticks_ms()
 filter_history = []
 
+
 # ========= Common helpers =========
 def now_str():
     return "%04d-%02d-%02d %02d:%02d:%02d" % time.localtime()[:6]
 
+
 def uptime_ms():
     return time.ticks_diff(time.ticks_ms(), BOOT_TICKS_MS)
+
 
 def reset_cause_name():
     cause = machine.reset_cause()
@@ -138,11 +151,38 @@ def reset_cause_name():
             mapping[getattr(machine, name)] = name
     return mapping.get(cause, str(cause))
 
+
+def get_boot_settle_ms():
+    cause = reset_cause_name()
+    if cause in ("PWRON_RESET", "HARD_RESET", "WDT_RESET"):
+        return COLD_BOOT_SETTLE_MS
+    return SOFT_BOOT_SETTLE_MS
+
+
+def pre_boot_stabilize():
+    wait_ms = get_boot_settle_ms()
+    if wait_ms <= 0:
+        return
+
+    print("⏳ 초기 전원 안정화 대기:", wait_ms // 1000, "초")
+    end_ms = time.ticks_add(time.ticks_ms(), wait_ms)
+    last_log_sec = -1
+
+    while time.ticks_diff(end_ms, time.ticks_ms()) > 0:
+        remain_ms = time.ticks_diff(end_ms, time.ticks_ms())
+        remain_sec = max(0, remain_ms // 1000)
+        if remain_sec != last_log_sec:
+            print("⏳ 부팅 안정화 중... 남은 시간:", remain_sec, "초")
+            last_log_sec = remain_sec
+        time.sleep_ms(250)
+
+
 def set_led(v):
     val = 1 if v else 0
     led.value(val)
     if onboard_led is not None:
         onboard_led.value(val)
+
 
 def blink_once(on_ms=80, off_ms=80):
     set_led(True)
@@ -150,9 +190,11 @@ def blink_once(on_ms=80, off_ms=80):
     set_led(False)
     time.sleep_ms(off_ms)
 
+
 def blink_n(n, on_ms=80, off_ms=80):
     for _ in range(n):
         blink_once(on_ms, off_ms)
+
 
 def start_watchdog():
     global wdt
@@ -163,12 +205,14 @@ def start_watchdog():
         wdt = None
         print("⚠️ WDT 시작 실패:", e)
 
+
 def feed_wdt():
     try:
         if wdt is not None:
             wdt.feed()
     except Exception:
         pass
+
 
 def maybe_gc(last_gc_ms):
     now = time.ticks_ms()
@@ -177,11 +221,13 @@ def maybe_gc(last_gc_ms):
         return now
     return last_gc_ms
 
+
 def short_gap(ms=PUBLISH_GAP_MS):
     feed_wdt()
     gc.collect()
     time.sleep_ms(ms)
     feed_wdt()
+
 
 def get_ip():
     try:
@@ -191,21 +237,26 @@ def get_ip():
         pass
     return ""
 
+
 def record_publish_success():
     global publish_success_count, publish_fail_streak, last_publish_ok_ms
     publish_success_count += 1
     publish_fail_streak = 0
     last_publish_ok_ms = time.ticks_ms()
 
+
 def record_publish_failure():
     global publish_fail_streak
     publish_fail_streak += 1
+    print("⚠️ publish 실패 누적:", publish_fail_streak)
     if publish_fail_streak >= MAX_PUBLISH_FAIL_STREAK:
         hard_recover("repeated publish failures")
+
 
 def check_publish_silence(now_ms):
     if time.ticks_diff(now_ms, last_publish_ok_ms) >= MAX_PUBLISH_SILENCE_MS:
         hard_recover("publish silence timeout")
+
 
 # ========= Wi-Fi config / portal =========
 def load_wifi_config():
@@ -218,6 +269,7 @@ def load_wifi_config():
         print("⚠️ config load 실패:", e)
         return None
 
+
 def save_wifi_config(ssid, pw, broker_ip=None):
     cfg = {"ssid": ssid, "password": pw}
     if broker_ip:
@@ -225,6 +277,7 @@ def save_wifi_config(ssid, pw, broker_ip=None):
     with open(CONFIG_PATH, "w") as f:
         f.write(ujson.dumps(cfg))
     print("✅ Wi-Fi 설정 저장 완료:", cfg)
+
 
 def url_decode(s):
     out = ""
@@ -244,6 +297,7 @@ def url_decode(s):
         i += 1
     return out
 
+
 def parse_form(body):
     out = {}
     for p in body.split("&"):
@@ -252,17 +306,20 @@ def parse_form(body):
             out[k] = url_decode(v)
     return out
 
+
 def reset_wifi_interface():
     global wlan
     try:
         if wlan is None:
             wlan = network.WLAN(network.STA_IF)
+
         wlan.active(False)
         time.sleep_ms(300)
         wlan.active(True)
-        time.sleep_ms(300)
+        time.sleep_ms(WIFI_POST_RESET_WAIT_MS)
     except Exception as e:
         print("⚠️ Wi-Fi 인터페이스 리셋 실패:", e)
+
 
 def try_connect_wifi(ssid, pw):
     global wlan
@@ -283,21 +340,29 @@ def try_connect_wifi(ssid, pw):
     reset_wifi_interface()
 
     print("📡 Wi-Fi 연결 시도:", ssid)
-    wlan.connect(ssid, pw)
+    try:
+        wlan.connect(ssid, pw)
+    except Exception as e:
+        print("❌ wlan.connect 실패:", e)
+        return False
 
     attempt = 0
     while not wlan.isconnected() and attempt < WIFI_RETRY_MAX:
         feed_wdt()
         attempt += 1
-        time.sleep(0.5)
+        if attempt == 1 or (attempt % 5 == 0):
+            print("📶 Wi-Fi 연결 대기 중...", attempt, "/", WIFI_RETRY_MAX)
+        time.sleep_ms(WIFI_RETRY_WAIT_MS)
 
     if not wlan.isconnected():
         print("❌ Wi-Fi 연결 실패")
         return False
 
     print("✅ Wi-Fi 연결 완료:", wlan.ifconfig())
+    time.sleep_ms(POST_WIFI_CONNECT_SETTLE_MS)
     blink_n(3)
     return True
+
 
 def connect_wifi_from_config():
     global MQTT_BROKER
@@ -313,15 +378,18 @@ def connect_wifi_from_config():
 
     if WIFI_SSID and WIFI_PASSWORD and try_connect_wifi(WIFI_SSID, WIFI_PASSWORD):
         MQTT_BROKER = DEFAULT_BROKER_IP
+        print("🌐 기본 설정으로 Wi-Fi 연결 OK, broker =", MQTT_BROKER)
         return True
 
     return False
+
 
 def wifi_ensure():
     if wlan is None or (not wlan.isconnected()):
         print("⚠️ Wi-Fi 미연결 감지 → 재연결")
         return connect_wifi_from_config()
     return True
+
 
 def start_config_portal():
     network.WLAN(network.STA_IF).active(False)
@@ -369,12 +437,14 @@ def start_config_portal():
             cl.send(HTML_FORM.encode())
             cl.close()
 
+
 def startup_wifi_or_portal():
     if connect_wifi_from_config():
         return True
     print("⚠️ Wi-Fi 접속 실패 → AP 모드 진입")
     start_config_portal()
     return False
+
 
 # ========= MQTT =========
 def close_mqtt_client():
@@ -401,6 +471,7 @@ def close_mqtt_client():
     client = None
     gc.collect()
 
+
 def apply_socket_timeout():
     global client
     try:
@@ -409,6 +480,7 @@ def apply_socket_timeout():
             print("⏱️ MQTT socket timeout =", SOCKET_TIMEOUT_SEC, "sec")
     except Exception as e:
         print("⚠️ socket timeout 설정 실패:", e)
+
 
 def mqtt_connect():
     global client, publish_success_count
@@ -431,6 +503,7 @@ def mqtt_connect():
         close_mqtt_client()
         return False
 
+
 def mqtt_ping():
     if client is None:
         return False
@@ -440,6 +513,7 @@ def mqtt_ping():
     except Exception as e:
         print("⚠️ ping 실패:", e)
         return False
+
 
 def mqtt_reconnect_with_backoff():
     backoff = 0.5
@@ -467,12 +541,14 @@ def mqtt_reconnect_with_backoff():
     print("🚫 MQTT 재연결 포기")
     return False
 
+
 def maybe_rotate_mqtt():
     global publish_success_count
     if publish_success_count >= FORCE_ROTATE_AFTER_PUBLISHES:
         print("♻️ 정기 MQTT 회전 실행 (publish count =", publish_success_count, ")")
         if mqtt_reconnect_with_backoff():
             publish_success_count = 0
+
 
 def hard_recover(reason="unknown"):
     print("♻️ 하드 복구 실행:", reason)
@@ -481,6 +557,7 @@ def hard_recover(reason="unknown"):
     reset_wifi_interface()
     time.sleep(2)
     machine.reset()
+
 
 def publish_json(topic, obj):
     msg = ujson.dumps(obj)
@@ -526,6 +603,7 @@ def publish_json(topic, obj):
     record_publish_failure()
     return False
 
+
 # ========= Payload builders =========
 def publish_device_status(state="normal", value=None, reason="heartbeat"):
     payload = {
@@ -544,6 +622,7 @@ def publish_device_status(state="normal", value=None, reason="heartbeat"):
         "publisher_reset_cause": reset_cause_name(),
     }
     return publish_json(STATUS_TOPIC, payload)
+
 
 def send_status(value, is_fire, reason="heartbeat", raw_value=None, median_value=None):
     payload = {
@@ -573,6 +652,7 @@ def send_status(value, is_fire, reason="heartbeat", raw_value=None, median_value
         print("❌ 상태 publish 최종 실패")
     return ok
 
+
 # ========= Sensor filtering =========
 def read_median_sample():
     vals = []
@@ -582,6 +662,7 @@ def read_median_sample():
         time.sleep_ms(FILTER_DELAY_MS)
     vals.sort()
     return vals[len(vals) // 2]
+
 
 def read_filtered_adc():
     raw = gas_sensor.read_u16()
@@ -593,6 +674,7 @@ def read_filtered_adc():
 
     avg_v = sum(filter_history) // len(filter_history)
     return raw, median_v, avg_v
+
 
 # ========= Main loop =========
 def run_loop():
@@ -608,6 +690,7 @@ def run_loop():
 
     set_led(False)
     blink_n(2)
+    pre_boot_stabilize()
 
     startup_wifi_or_portal()
 
@@ -684,7 +767,6 @@ def run_loop():
 
         raw_value, median_value, gas_value = read_filtered_adc()
 
-        # Fault detection
         if gas_value <= FAULT_MIN_VALID or gas_value >= FAULT_MAX_VALID:
             fault_bad_count += 1
             fault_good_count = 0
@@ -702,19 +784,20 @@ def run_loop():
 
         if fault_active:
             if time.ticks_diff(now, t_last_fault_log) >= FAULT_LOG_MS:
-                print("⚠️ 센서 이상 상태 유지 중...",
-                      "(filtered=%d, raw=%d, median=%d)" %
-                      (gas_value, raw_value, median_value))
+                print(
+                    "⚠️ 센서 이상 상태 유지 중...",
+                    "(filtered=%d, raw=%d, median=%d)" %
+                    (gas_value, raw_value, median_value)
+                )
                 t_last_fault_log = now
 
-            if ENABLE_STATUS_HEARTBEAT and time.ticks_diff(now, t_last_status) >= STATUS_HEARTBEAT_MS:
+            if time.ticks_diff(now, t_last_status) >= STATUS_HEARTBEAT_MS:
                 publish_device_status(state="fault", value=gas_value, reason="heartbeat")
                 t_last_status = now
 
             time.sleep_ms(100)
             continue
 
-        # Hysteresis
         if current_fire_state is None:
             current_fire_state = (gas_value >= THRESHOLD_HIGH)
         else:
@@ -741,7 +824,7 @@ def run_loop():
             send_status(gas_value, current_fire_state, "heartbeat", raw_value, median_value)
             t_last_report = now
 
-        if ENABLE_STATUS_HEARTBEAT and time.ticks_diff(now, t_last_status) >= STATUS_HEARTBEAT_MS:
+        if time.ticks_diff(now, t_last_status) >= STATUS_HEARTBEAT_MS:
             short_gap()
             publish_device_status(
                 state="alarm" if current_fire_state else "normal",
@@ -751,6 +834,7 @@ def run_loop():
             t_last_status = now
 
         time.sleep_ms(100)
+
 
 def main():
     while True:
@@ -763,5 +847,5 @@ def main():
             time.sleep(2)
             machine.reset()
 
-main()
 
+main()
