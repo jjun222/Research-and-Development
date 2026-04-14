@@ -1,3 +1,4 @@
+
 import gc
 import machine
 import network
@@ -8,15 +9,16 @@ import ujson
 from umqtt.simple import MQTTClient
 
 # =========================
-# Water sensor (product final)
+# Water sensor (product final, cold-boot stabilized)
 # - NORMAL -> ABNORMAL 일 때만 water_level/sensor 이벤트 발행
 # - ABNORMAL -> NORMAL 일 때는 status만 갱신
 # - 이후 다시 ABNORMAL 되면 다시 이벤트 발행
-# - WDT / reconnect / AP provisioning / publish 보호 유지
+# - Cold boot power-settle delay before Wi-Fi start
+# - Wi-Fi connect tries up to 30 checks before AP mode
+# - Keeps WDT / reconnect / AP provisioning / publish protection
 # =========================
 
 WATER_PIN = 5
-BOOT_SETTLE_MS = 2000
 
 WIFI_SSID = ""
 WIFI_PASSWORD = ""
@@ -34,19 +36,26 @@ CHECK_INTERVAL_MS = 500
 DEBOUNCE_SAMPLES = 10
 DEBOUNCE_MIN_HIGH = 7
 
-WIFI_RETRY_MAX = 15
+WIFI_RETRY_MAX = 30
+WIFI_RETRY_WAIT_MS = 500
 MQTT_RECONNECT_MAX = 10
 MAX_RECOVERY_FAILS = 5
 
 GC_INTERVAL_MS = 20000
 WDT_TIMEOUT_MS = 8000
 SOCKET_TIMEOUT_SEC = 3
-DEBUG_PUBLISH = True
+DEBUG_PUBLISH = False
 
 STATUS_HEARTBEAT_MS = 60000
 PUBLISH_GAP_MS = 120
 PUBLISH_FAIL_RESET_THRESHOLD = 5
 FORCE_ROTATE_AFTER_PUBLISHES = 120
+MAX_PUBLISH_SILENCE_MS = 180_000
+
+COLD_BOOT_SETTLE_MS = 12_000
+SOFT_BOOT_SETTLE_MS = 3_000
+WIFI_POST_RESET_WAIT_MS = 1_500
+POST_WIFI_CONNECT_SETTLE_MS = 1_000
 
 AP_SSID = "water_level_setup"
 AP_PW = "123456789"
@@ -84,6 +93,7 @@ wdt = None
 recovery_fail_count = 0
 publish_success_count = 0
 consecutive_publish_failures = 0
+last_publish_ok_ms = time.ticks_ms()
 BOOT_TICKS_MS = time.ticks_ms()
 
 
@@ -102,6 +112,31 @@ def reset_cause_name():
         if hasattr(machine, name):
             mapping[getattr(machine, name)] = name
     return mapping.get(cause, str(cause))
+
+
+def get_boot_settle_ms():
+    cause = reset_cause_name()
+    if cause in ("PWRON_RESET", "HARD_RESET", "WDT_RESET"):
+        return COLD_BOOT_SETTLE_MS
+    return SOFT_BOOT_SETTLE_MS
+
+
+def pre_boot_stabilize():
+    wait_ms = get_boot_settle_ms()
+    if wait_ms <= 0:
+        return
+
+    print("⏳ 초기 전원 안정화 대기:", wait_ms // 1000, "초")
+    end_ms = time.ticks_add(time.ticks_ms(), wait_ms)
+    last_log_sec = -1
+
+    while time.ticks_diff(end_ms, time.ticks_ms()) > 0:
+        remain_ms = time.ticks_diff(end_ms, time.ticks_ms())
+        remain_sec = max(0, remain_ms // 1000)
+        if remain_sec != last_log_sec:
+            print("⏳ 부팅 안정화 중... 남은 시간:", remain_sec, "초")
+            last_log_sec = remain_sec
+        time.sleep_ms(250)
 
 
 def set_led(v):
@@ -154,6 +189,11 @@ def short_gap(ms=PUBLISH_GAP_MS):
     feed_wdt()
 
 
+def check_publish_silence(now_ms):
+    if time.ticks_diff(now_ms, last_publish_ok_ms) >= MAX_PUBLISH_SILENCE_MS:
+        hard_recover("water publish silence timeout")
+
+
 def hard_recover(reason="unknown"):
     print("♻️ 하드 복구 실행:", reason)
     blink_n(4, 120, 120)
@@ -164,8 +204,9 @@ def hard_recover(reason="unknown"):
 
 
 def record_publish_success():
-    global consecutive_publish_failures
+    global consecutive_publish_failures, last_publish_ok_ms
     consecutive_publish_failures = 0
+    last_publish_ok_ms = time.ticks_ms()
 
 
 def record_publish_failure():
@@ -193,6 +234,7 @@ def save_wifi_config(ssid, pw, broker_ip=None):
         cfg["broker"] = broker_ip
     with open(CONFIG_PATH, "w") as f:
         f.write(ujson.dumps(cfg))
+    print("✅ Wi-Fi 설정 저장 완료:", cfg)
 
 
 def url_decode(s):
@@ -231,7 +273,7 @@ def reset_wifi_interface():
         wlan.active(False)
         time.sleep_ms(300)
         wlan.active(True)
-        time.sleep_ms(300)
+        time.sleep_ms(WIFI_POST_RESET_WAIT_MS)
     except Exception as e:
         print("⚠️ Wi-Fi 인터페이스 리셋 실패:", e)
 
@@ -252,19 +294,26 @@ def try_connect_wifi(ssid, pw):
 
     reset_wifi_interface()
     print("📡 Wi-Fi 연결 시도:", ssid)
-    wlan.connect(ssid, pw)
+    try:
+        wlan.connect(ssid, pw)
+    except Exception as e:
+        print("❌ wlan.connect 실패:", e)
+        return False
 
     attempt = 0
     while not wlan.isconnected() and attempt < WIFI_RETRY_MAX:
         feed_wdt()
         attempt += 1
-        time.sleep(0.5)
+        if attempt == 1 or (attempt % 5 == 0):
+            print("📶 Wi-Fi 연결 대기 중...", attempt, "/", WIFI_RETRY_MAX)
+        time.sleep_ms(WIFI_RETRY_WAIT_MS)
 
     if not wlan.isconnected():
         print("❌ Wi-Fi 연결 실패")
         return False
 
     print("✅ Wi-Fi 연결 완료:", wlan.ifconfig())
+    time.sleep_ms(POST_WIFI_CONNECT_SETTLE_MS)
     blink_n(3)
     return True
 
@@ -283,6 +332,7 @@ def connect_wifi_from_config():
 
     if WIFI_SSID and WIFI_PASSWORD and try_connect_wifi(WIFI_SSID, WIFI_PASSWORD):
         MQTT_BROKER = DEFAULT_BROKER_IP
+        print("🌐 기본 설정으로 Wi-Fi 연결 OK, broker =", MQTT_BROKER)
         return True
 
     return False
@@ -352,6 +402,7 @@ def start_config_portal():
 def startup_wifi_or_portal():
     if connect_wifi_from_config():
         return True
+    print("⚠️ Wi-Fi 접속 실패 → AP 모드 진입")
     start_config_portal()
     return False
 
@@ -415,7 +466,8 @@ def mqtt_ping():
     try:
         client.ping()
         return True
-    except Exception:
+    except Exception as e:
+        print("⚠️ ping 실패:", e)
         return False
 
 
@@ -433,12 +485,9 @@ def mqtt_reconnect_with_backoff():
             backoff = min(backoff * 2, 5)
             continue
 
-        try:
-            if mqtt_connect():
-                print("✅ MQTT 재연결 성공")
-                return True
-        except Exception as e:
-            print("❌ MQTT 재연결 중 예외:", e)
+        if mqtt_connect():
+            print("✅ MQTT 재연결 성공")
+            return True
 
         gc.collect()
         time.sleep(backoff)
@@ -464,11 +513,15 @@ def publish_json(topic, obj):
     for attempt in range(4):
         feed_wdt()
 
-        if client is None:
-            if not mqtt_reconnect_with_backoff():
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 5)
-                continue
+        if client is None and not mqtt_reconnect_with_backoff():
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 5)
+            continue
+
+        if not wifi_ensure():
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 5)
+            continue
 
         try:
             gc.collect()
@@ -485,9 +538,8 @@ def publish_json(topic, obj):
             print("❗ publish 실패[%d]:" % (attempt + 1), e, "(free=", gc.mem_free(), ")")
             close_mqtt_client()
             gc.collect()
-            if not mqtt_reconnect_with_backoff():
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 5)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 5)
 
     record_publish_failure()
     return False
@@ -522,12 +574,12 @@ def is_water_high():
     return count >= DEBOUNCE_MIN_HIGH
 
 
-def send_water_state(is_abnormal, reason="state_change"):
+def send_water_state():
     payload = {
         "sensor_id": MQTT_CLIENT_ID,
         "event": "water_detected",
-        "status": "ABNORMAL" if is_abnormal else "NORMAL",
-        "value": 1 if is_abnormal else 0,
+        "status": "ABNORMAL",
+        "value": 1,
         "timestamp": now_str(),
         "publisher_uptime_ms": int(uptime_ms()),
         "publisher_reset_cause": reset_cause_name(),
@@ -549,7 +601,7 @@ def main():
 
     set_led(False)
     blink_n(2)
-    time.sleep_ms(BOOT_SETTLE_MS)
+    pre_boot_stabilize()
 
     startup_wifi_or_portal()
     while not mqtt_connect():
@@ -569,6 +621,7 @@ def main():
         feed_wdt()
         now = time.ticks_ms()
         t_gc = maybe_gc(t_gc)
+        check_publish_silence(now)
 
         if time.ticks_diff(now, t_led) >= 1000:
             led_on = not led_on
@@ -604,7 +657,7 @@ def main():
             print("💧 상태 변화:", prev_state, "->", state)
 
             if state == "ABNORMAL":
-                ok1 = send_water_state(True, "state_change")
+                ok1 = send_water_state()
                 if not ok1:
                     print("⚠️ water event publish 실패")
                 short_gap()
