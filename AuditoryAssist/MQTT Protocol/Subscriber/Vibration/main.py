@@ -1,3 +1,4 @@
+
 import gc
 import os
 import socket
@@ -40,9 +41,13 @@ TOPIC_LOG = f"interfaceui/logs/subscriber/{DEVICE_ID}"
 # =========================================================
 # Runtime / safety configuration
 # =========================================================
-WIFI_RETRY_MAX = const(20)
+WIFI_RETRY_MAX = const(30)
 WIFI_RETRY_WAIT_MS = const(500)
-BOOT_SETTLE_MS = const(2500)
+COLD_BOOT_SETTLE_MS = const(12000)
+SOFT_BOOT_SETTLE_MS = const(3000)
+WIFI_POST_RESET_WAIT_MS = const(1500)
+POST_WIFI_CONNECT_SETTLE_MS = const(1000)
+
 MAIN_LOOP_SLEEP_MS = const(5)
 RECONNECT_DELAY_MS = const(2000)
 MAX_RECOVERY_FAILS = const(8)
@@ -54,6 +59,7 @@ SOCKET_TIMEOUT_SEC = const(3)
 STATUS_HEARTBEAT_MS = const(60000)
 FORCE_ROTATE_AFTER_PUBLISHES = const(120)
 PUBLISH_FAIL_MAX = const(5)
+NO_MQTT_ACTIVITY_MS = const(180000)
 
 AP_SSID = "vibrator_setup"
 AP_PW = "123456789"
@@ -112,7 +118,7 @@ wdt = None
 recovery_fail_count = 0
 publish_success_count = 0
 publish_fail_count = 0
-
+last_mqtt_ok_ms = time.ticks_ms()
 
 # =========================================================
 # Basic helpers
@@ -120,10 +126,8 @@ publish_fail_count = 0
 def now_ts():
     return int(time.time())
 
-
 def ticks_ms():
     return time.ticks_ms()
-
 
 def reset_cause_name():
     cause = machine.reset_cause()
@@ -133,11 +137,37 @@ def reset_cause_name():
             mapping[getattr(machine, name)] = name
     return mapping.get(cause, str(cause))
 
+def get_boot_settle_ms():
+    cause = reset_cause_name()
+    if cause in ("PWRON_RESET", "HARD_RESET", "WDT_RESET"):
+        return COLD_BOOT_SETTLE_MS
+    return SOFT_BOOT_SETTLE_MS
+
+def pre_boot_stabilize():
+    wait_ms = get_boot_settle_ms()
+    if wait_ms <= 0:
+        return
+    print("⏳ 초기 전원 안정화 대기:", wait_ms // 1000, "초")
+    end_ms = time.ticks_add(time.ticks_ms(), wait_ms)
+    last_log = -1
+    while time.ticks_diff(end_ms, time.ticks_ms()) > 0:
+        remain_sec = max(0, time.ticks_diff(end_ms, time.ticks_ms()) // 1000)
+        if remain_sec != last_log:
+            print("⏳ 부팅 안정화 중... 남은 시간:", remain_sec, "초")
+            last_log = remain_sec
+        time.sleep_ms(250)
+
+def note_mqtt_ok():
+    global last_mqtt_ok_ms
+    last_mqtt_ok_ms = ticks_ms()
+
+def check_mqtt_inactivity(now_ms):
+    if time.ticks_diff(now_ms, last_mqtt_ok_ms) >= NO_MQTT_ACTIVITY_MS:
+        hard_recover("vibrator mqtt inactivity timeout")
 
 def led_off():
     if LED:
         LED.value(0)
-
 
 def led_blink(count=1, on_ms=120, off_ms=120):
     if not LED:
@@ -148,7 +178,6 @@ def led_blink(count=1, on_ms=120, off_ms=120):
         LED.value(0)
         time.sleep_ms(off_ms)
 
-
 def start_watchdog():
     global wdt
     try:
@@ -158,7 +187,6 @@ def start_watchdog():
         wdt = None
         print("⚠️ WDT 시작 실패:", exc)
 
-
 def feed_wdt():
     try:
         if wdt is not None:
@@ -166,14 +194,12 @@ def feed_wdt():
     except Exception:
         pass
 
-
 def maybe_gc(last_gc_ms):
     now = ticks_ms()
     if time.ticks_diff(now, last_gc_ms) >= GC_INTERVAL_MS:
         gc.collect()
         return now
     return last_gc_ms
-
 
 # =========================================================
 # Motor helpers
@@ -183,7 +209,6 @@ def set_motor_forward():
     IN2.value(0)
     IN3.value(1)
     IN4.value(0)
-
 
 def set_power_ratio(ratio):
     if ratio <= 0:
@@ -195,14 +220,12 @@ def set_power_ratio(ratio):
     ENA.duty_u16(duty)
     ENB.duty_u16(duty)
 
-
 def stop_all():
     set_power_ratio(0.0)
     IN1.value(0)
     IN2.value(0)
     IN3.value(0)
     IN4.value(0)
-
 
 def start_fire_alert(duration_ms=10000, on_ms=400, off_ms=200, intensity=0.85):
     set_motor_forward()
@@ -219,11 +242,9 @@ def start_fire_alert(duration_ms=10000, on_ms=400, off_ms=200, intensity=0.85):
         }
     )
 
-
 def stop_pattern():
     _pattern_state["active"] = False
     stop_all()
-
 
 def pattern_tick():
     if not _pattern_state["active"]:
@@ -245,7 +266,6 @@ def pattern_tick():
             _pattern_state["vibrating"] = True
             _pattern_state["next_toggle_ms"] = time.ticks_add(now, _pattern_state["on_ms"])
 
-
 # =========================================================
 # Wi-Fi configuration / AP portal
 # =========================================================
@@ -259,7 +279,6 @@ def load_wifi_config():
         print("⚠️ config load 실패:", exc)
         return None
 
-
 def save_wifi_config(ssid, password, broker_ip=None):
     config = {"ssid": ssid, "password": password}
     if broker_ip:
@@ -267,7 +286,6 @@ def save_wifi_config(ssid, password, broker_ip=None):
     with open(CONFIG_PATH, "w") as file:
         file.write(ujson.dumps(config))
     print("✅ Wi-Fi 설정 저장 완료:", config)
-
 
 def url_decode(value):
     result = ""
@@ -287,7 +305,6 @@ def url_decode(value):
         i += 1
     return result
 
-
 def parse_form(body):
     result = {}
     for part in body.split("&"):
@@ -295,7 +312,6 @@ def parse_form(body):
             key, value = part.split("=", 1)
             result[key] = url_decode(value)
     return result
-
 
 def radio_reset():
     global wlan
@@ -318,12 +334,10 @@ def radio_reset():
         wlan.active(True)
     except Exception:
         pass
-    time.sleep_ms(500)
-
+    time.sleep_ms(WIFI_POST_RESET_WAIT_MS)
 
 def wifi_is_connected():
     return wlan is not None and wlan.active() and wlan.isconnected()
-
 
 def try_connect_wifi(ssid, password, force_reset=True):
     global wlan
@@ -351,6 +365,8 @@ def try_connect_wifi(ssid, password, force_reset=True):
     while not wlan.isconnected() and attempt < WIFI_RETRY_MAX:
         feed_wdt()
         attempt += 1
+        if attempt == 1 or (attempt % 5 == 0):
+            print("📶 Wi-Fi 연결 대기 중...", attempt, "/", WIFI_RETRY_MAX)
         time.sleep_ms(WIFI_RETRY_WAIT_MS)
 
     if not wlan.isconnected():
@@ -358,9 +374,9 @@ def try_connect_wifi(ssid, password, force_reset=True):
         return False
 
     print("✅ Wi-Fi 연결 완료:", wlan.ifconfig())
+    time.sleep_ms(POST_WIFI_CONNECT_SETTLE_MS)
     led_blink(3, 80, 80)
     return True
-
 
 def connect_wifi_from_config(force_reset=True):
     global MQTT_BROKER
@@ -378,16 +394,15 @@ def connect_wifi_from_config(force_reset=True):
     if WIFI_SSID and WIFI_PASSWORD:
         MQTT_BROKER = DEFAULT_BROKER_IP
         if try_connect_wifi(WIFI_SSID, WIFI_PASSWORD, force_reset):
+            print("🌐 기본 설정으로 Wi-Fi 연결 OK, broker =", MQTT_BROKER)
             return True
 
     return False
-
 
 def wifi_ensure():
     if wifi_is_connected():
         return True
     return connect_wifi_from_config(True)
-
 
 def start_config_portal():
     network.WLAN(network.STA_IF).active(False)
@@ -432,13 +447,11 @@ def start_config_portal():
             connection.send(HTML_FORM.encode())
             connection.close()
 
-
 def startup_wifi_or_portal():
     if connect_wifi_from_config(True):
         return True
     start_config_portal()
     return False
-
 
 # =========================================================
 # MQTT helpers
@@ -465,7 +478,6 @@ def close_mqtt_client():
     client = None
     gc.collect()
 
-
 def apply_socket_timeout():
     global client
     try:
@@ -474,7 +486,6 @@ def apply_socket_timeout():
             print("⏱️ MQTT socket timeout =", SOCKET_TIMEOUT_SEC, "sec")
     except Exception:
         pass
-
 
 def safe_publish(topic, payload, retain=False):
     global publish_success_count, publish_fail_count
@@ -486,12 +497,12 @@ def safe_publish(topic, payload, retain=False):
         client.publish(topic, payload, retain=retain)
         publish_success_count += 1
         publish_fail_count = 0
+        note_mqtt_ok()
         return True
     except Exception as exc:
         publish_fail_count += 1
         print("⚠️ publish 실패:", exc)
         return False
-
 
 def publish_status(online=True, reason="heartbeat"):
     payload = {
@@ -505,7 +516,6 @@ def publish_status(online=True, reason="heartbeat"):
     }
     safe_publish(TOPIC_STATUS, payload, retain=True)
 
-
 def publish_hello():
     payload = {
         "id": DEVICE_ID,
@@ -516,7 +526,6 @@ def publish_hello():
     }
     safe_publish(TOPIC_HELLO, payload, retain=True)
     log("info", "hello published", ip=payload["ip"])
-
 
 def log(level, message, **extra):
     try:
@@ -531,9 +540,9 @@ def log(level, message, **extra):
     except Exception:
         pass
 
-
 def mqtt_callback(topic, message):
     led_blink(1, 40, 40)
+    note_mqtt_ok()
     try:
         raw = message.decode() if isinstance(message, (bytes, bytearray)) else str(message)
         payload = ujson.loads(raw) if raw and raw[0] in "[{" else {}
@@ -558,7 +567,6 @@ def mqtt_callback(topic, message):
     else:
         print("[VIB] unknown cmd:", command, payload)
 
-
 def mqtt_connect_and_sub():
     global client, publish_success_count, publish_fail_count
     close_mqtt_client()
@@ -574,8 +582,8 @@ def mqtt_connect_and_sub():
     publish_fail_count = 0
     publish_status(True, "mqtt_connected")
     publish_hello()
+    note_mqtt_ok()
     return mqtt
-
 
 def mqtt_reconnect_with_backoff():
     backoff = 0.5
@@ -595,13 +603,11 @@ def mqtt_reconnect_with_backoff():
         backoff = min(backoff * 2, 5)
     return False
 
-
 def maybe_rotate_mqtt():
     global publish_success_count
     if publish_success_count >= FORCE_ROTATE_AFTER_PUBLISHES:
         if mqtt_reconnect_with_backoff():
             publish_success_count = 0
-
 
 def hard_recover(reason="unknown"):
     print("♻️ 하드 복구 실행:", reason)
@@ -619,7 +625,6 @@ def hard_recover(reason="unknown"):
     time.sleep(2)
     machine.reset()
 
-
 # =========================================================
 # Main loop
 # =========================================================
@@ -629,7 +634,7 @@ def main():
     stop_all()
     led_off()
     led_blink(2, 100, 100)
-    time.sleep_ms(BOOT_SETTLE_MS)
+    pre_boot_stabilize()
     startup_wifi_or_portal()
 
     while True:
@@ -662,6 +667,8 @@ def main():
         try:
             feed_wdt()
             last_gc_ms = maybe_gc(last_gc_ms)
+            now_ms = ticks_ms()
+            check_mqtt_inactivity(now_ms)
 
             if not wifi_ensure():
                 close_mqtt_client()
@@ -679,24 +686,25 @@ def main():
 
             try:
                 client.check_msg()
+                note_mqtt_ok()
             except Exception as exc:
                 print("check_msg err:", exc)
                 close_mqtt_client()
 
             pattern_tick()
-            now = ticks_ms()
 
-            if time.ticks_diff(now, last_ping_ms) >= PING_INTERVAL_MS:
+            if time.ticks_diff(now_ms, last_ping_ms) >= PING_INTERVAL_MS:
                 try:
                     client.ping()
-                    last_ping_ms = now
+                    note_mqtt_ok()
+                    last_ping_ms = now_ms
                 except Exception:
                     close_mqtt_client()
 
-            if time.ticks_diff(now, last_status_ms) >= STATUS_HEARTBEAT_MS:
+            if time.ticks_diff(now_ms, last_status_ms) >= STATUS_HEARTBEAT_MS:
                 publish_status(True, "heartbeat")
                 publish_hello()
-                last_status_ms = now
+                last_status_ms = now_ms
 
             if publish_fail_count >= PUBLISH_FAIL_MAX:
                 hard_recover("vibrator publish failures")
@@ -713,7 +721,6 @@ def main():
             if recovery_fail_count >= MAX_RECOVERY_FAILS:
                 hard_recover("vibrator mqtt loop stuck")
             time.sleep_ms(RECONNECT_DELAY_MS)
-
 
 try:
     main()
