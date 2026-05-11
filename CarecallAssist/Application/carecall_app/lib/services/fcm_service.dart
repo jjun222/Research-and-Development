@@ -1,0 +1,87 @@
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
+
+import '../models/alert_event.dart';
+import '../store/alert_store.dart';
+import 'navigation_service.dart';
+
+class FcmService {
+  FcmService._internal();
+
+  static final FcmService instance = FcmService._internal();
+
+  final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+
+  bool _initialized = false;
+  String? currentToken;
+
+  Future<void> initialize() async {
+    if (_initialized) return;
+    _initialized = true;
+
+    final settings = await _messaging.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+      provisional: false,
+    );
+
+    debugPrint('알림 권한 상태: ${settings.authorizationStatus}');
+
+    currentToken = await _messaging.getToken();
+    debugPrint('FCM Token: $currentToken');
+
+    _messaging.onTokenRefresh.listen((newToken) {
+      currentToken = newToken;
+      debugPrint('FCM Token 갱신: $newToken');
+
+      // TODO: 나중에 Raspberry Pi 서버로 새 토큰 전송
+    });
+
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      debugPrint('포그라운드 메시지 수신');
+      debugPrint('제목: ${message.notification?.title}');
+      debugPrint('내용: ${message.notification?.body}');
+      debugPrint('데이터: ${message.data}');
+
+      _handleIncomingMessage(message, openDetailPage: false);
+    });
+
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      debugPrint('알림 클릭으로 앱 열림');
+      debugPrint('데이터: ${message.data}');
+
+      _handleIncomingMessage(message, openDetailPage: true);
+    });
+
+    final initialMessage = await _messaging.getInitialMessage();
+    if (initialMessage != null) {
+      debugPrint('종료 상태에서 알림 클릭으로 앱 실행');
+      _handleIncomingMessage(initialMessage, openDetailPage: true);
+    }
+  }
+
+  Future<String?> refreshToken() async {
+    currentToken = await _messaging.getToken();
+    debugPrint('FCM Token 재조회: $currentToken');
+    return currentToken;
+  }
+
+  void _handleIncomingMessage(
+    RemoteMessage message, {
+    required bool openDetailPage,
+  }) {
+    final alert = AlertEvent.fromRemoteMessage(message);
+
+    AlertStore.instance.addAlert(alert);
+
+    if (openDetailPage) {
+      Future.delayed(const Duration(milliseconds: 300), () {
+        NavigationService.navigatorKey.currentState?.pushNamed(
+          '/alert-detail',
+          arguments: alert.id,
+        );
+      });
+    }
+  }
+}
