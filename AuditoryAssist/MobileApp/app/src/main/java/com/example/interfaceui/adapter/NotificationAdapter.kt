@@ -7,10 +7,10 @@ import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.example.interfaceui.R
 import com.example.interfaceui.data.NotificationEntity
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-/**
- * 단순 RecyclerView.Adapter 구현 (데이터 바인딩 X)
- */
 class NotificationAdapter : RecyclerView.Adapter<NotificationAdapter.VH>() {
 
     private val items = mutableListOf<NotificationEntity>()
@@ -18,10 +18,17 @@ class NotificationAdapter : RecyclerView.Adapter<NotificationAdapter.VH>() {
     class VH(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val title: TextView = itemView.findViewById(R.id.tvTitle)
         private val message: TextView = itemView.findViewById(R.id.tvMessage)
+        private val time: TextView = itemView.findViewById(R.id.tvTime)
+
+        private val formatter = SimpleDateFormat(
+            "yyyy-MM-dd HH:mm:ss",
+            Locale.KOREA
+        )
 
         fun bind(item: NotificationEntity) {
             title.text = item.title
             message.text = item.message
+            time.text = formatter.format(Date(item.createdAt))
         }
     }
 
@@ -37,20 +44,17 @@ class NotificationAdapter : RecyclerView.Adapter<NotificationAdapter.VH>() {
 
     override fun getItemCount(): Int = items.size
 
-    /** 목록 통째로 교체 */
     fun submit(newItems: List<NotificationEntity>) {
         items.clear()
         items.addAll(newItems)
         notifyDataSetChanged()
     }
 
-    /** 단일 추가(상단에 삽입) */
     fun add(item: NotificationEntity) {
         items.add(0, item)
         notifyItemInserted(0)
     }
 
-    /** 전체 삭제 */
     fun clear() {
         val size = items.size
         items.clear()
