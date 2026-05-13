@@ -1,3 +1,4 @@
+# handlers.py
 from handler_registry import register_handler
 import json
 import threading
