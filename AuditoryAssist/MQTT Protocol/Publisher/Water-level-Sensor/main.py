@@ -5,23 +5,36 @@ import os
 import socket
 import time
 import ujson
-from umqtt.simple import MQTTClient
+
+try:
+    from umqtt.simple import MQTTClient
+except Exception:
+    from simple import MQTTClient
 
 # =========================================================
-# Water sensor / Water-level publisher
-# Product final - event based, no publish-silence reset
+# Water Sensor / Water-level publisher
+# Product final - event based + 5 min MQTT refresh
 #
 # Hardware:
 #   GPIO5 ---- water/float switch ---- GND
 #   Internal PULL_UP is used.
 #
-# Behavior:
+# Normal state:
+#   - water_level/sensor is NOT published.
+#   - status heartbeat is published every 60 seconds.
+#   - MQTT ping check is performed every 30 seconds.
+#   - MQTT connection is refreshed every 5 minutes to avoid stale socket.
+#
+# Water detected:
 #   - water_level/sensor is published only when NORMAL -> ABNORMAL occurs.
 #   - ABNORMAL -> NORMAL publishes status only.
-#   - If ABNORMAL event publish fails, it is retried periodically while
+#   - If ABNORMAL event publish fails, it is kept pending and retried while
 #     the sensor remains ABNORMAL.
+#
+# Important:
+#   - No publish-silence reset.
 #   - No forced reboot only because no water event occurred.
-#   - status heartbeat is published periodically for device health.
+#   - Reconnect is handled by the normal maintenance loop, not by sensor event.
 # =========================================================
 
 # =========================
@@ -29,6 +42,7 @@ from umqtt.simple import MQTTClient
 # =========================
 WATER_PIN = 5
 
+# Pull-up input: normal/open = 1, water/high/closed = 0
 water_switch = machine.Pin(WATER_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
 
 try:
@@ -52,9 +66,13 @@ STATUS_TOPIC = "interfaceui/status/publisher/" + MQTT_CLIENT_ID
 KEEPALIVE_SEC = 60
 PING_INTERVAL_MS = 30_000
 STATUS_HEARTBEAT_MS = 60_000
+MQTT_FORCE_RECONNECT_MS = 300_000  # 5 minutes
+
 GC_INTERVAL_MS = 20_000
 
-# Sensor debounce
+# =========================
+# Water sensing / debounce
+# =========================
 CHECK_INTERVAL_MS = 500
 DEBOUNCE_SAMPLES = 10
 DEBOUNCE_MIN_HIGH = 7
@@ -62,8 +80,12 @@ DEBOUNCE_MIN_HIGH = 7
 # If ABNORMAL event publish fails, retry while water remains abnormal.
 EVENT_RETRY_INTERVAL_MS = 5_000
 
-# 30 checks * 0.5 sec = about 15 sec before AP mode
-WIFI_RETRY_MAX = 30
+# =========================
+# Wi-Fi / MQTT recovery
+# =========================
+# 현재 테스트에서 사용하던 값을 유지:
+# 300 checks * 0.5 sec = about 150 sec before AP mode
+WIFI_RETRY_MAX = 300
 WIFI_RETRY_WAIT_MS = 500
 
 MQTT_RECONNECT_MAX = 10
@@ -73,14 +95,13 @@ WDT_TIMEOUT_MS = 8_000
 SOCKET_TIMEOUT_SEC = 3
 
 # Cold boot stabilization for UPS / power-only boot
-COLD_BOOT_SETTLE_MS = 12_000
+COLD_BOOT_SETTLE_MS = 3_000
 SOFT_BOOT_SETTLE_MS = 3_000
 WIFI_POST_RESET_WAIT_MS = 1_500
 POST_WIFI_CONNECT_SETTLE_MS = 1_000
 
-DEBUG_PUBLISH = False
+DEBUG_PUBLISH = True
 PUBLISH_FAIL_RESET_THRESHOLD = 5
-FORCE_ROTATE_AFTER_PUBLISHES = 120
 PUBLISH_GAP_MS = 120
 
 AP_SSID = "water_level_setup"
@@ -234,7 +255,8 @@ def record_publish_failure():
     consecutive_publish_failures += 1
     print("⚠️ publish 실패 누적:", consecutive_publish_failures)
 
-    # Water sensor is event-based. Do not reboot only because a publish failed.
+    # Water sensor is event-based.
+    # Do not reboot only because a publish failed.
     # Close MQTT and let the main loop reconnect.
     if consecutive_publish_failures >= PUBLISH_FAIL_RESET_THRESHOLD:
         print("⚠️ publish 실패 누적 초과 → MQTT 연결만 초기화")
@@ -312,6 +334,7 @@ def try_connect_wifi(ssid, pw):
         return False
 
     network.WLAN(network.AP_IF).active(False)
+
     if wlan is None:
         wlan = network.WLAN(network.STA_IF)
 
@@ -437,7 +460,7 @@ def startup_wifi_or_portal():
 
 
 # =========================================================
-# MQTT
+# MQTT connection
 # =========================================================
 def close_mqtt_client():
     global client
@@ -465,6 +488,7 @@ def close_mqtt_client():
 
 
 def apply_socket_timeout():
+    global client
     try:
         if client is not None and hasattr(client, "sock") and client.sock is not None:
             client.sock.settimeout(SOCKET_TIMEOUT_SEC)
@@ -509,6 +533,7 @@ def mqtt_ping():
 
 def mqtt_reconnect_with_backoff():
     backoff = 0.5
+
     for attempt in range(MQTT_RECONNECT_MAX):
         feed_wdt()
         print("🔁 MQTT 재연결 시도", attempt + 1, "(free mem =", gc.mem_free(), ")")
@@ -534,60 +559,68 @@ def mqtt_reconnect_with_backoff():
     return False
 
 
-def maybe_rotate_mqtt():
-    global publish_success_count
-    if publish_success_count >= FORCE_ROTATE_AFTER_PUBLISHES:
-        print("♻️ 정기 MQTT 회전 실행 (publish count =", publish_success_count, ")")
-        if mqtt_reconnect_with_backoff():
-            publish_success_count = 0
+def maintain_mqtt_connection(now, force_reconnect=False):
+    global recovery_fail_count
+
+    if force_reconnect:
+        print("♻️ 5분 주기 MQTT 재연결")
+        ok = mqtt_reconnect_with_backoff()
+    elif wlan is None or (not wlan.isconnected()) or client is None:
+        ok = mqtt_reconnect_with_backoff()
+    else:
+        ok = True
+
+    if ok:
+        recovery_fail_count = 0
+        return True
+
+    recovery_fail_count += 1
+    print("⚠️ 복구 실패 누적:", recovery_fail_count)
+
+    if recovery_fail_count >= MAX_RECOVERY_FAILS:
+        hard_recover("water wifi/mqtt stuck")
+
+    return False
 
 
+# =========================================================
+# MQTT publish
+# =========================================================
 def publish_json(topic, obj):
     global publish_success_count
+
+    # Do not reconnect inside publish_json.
+    # Reconnect is handled by the normal maintenance loop.
+    if wlan is None or (not wlan.isconnected()) or client is None:
+        print("⚠️ publish 불가: MQTT/Wi-Fi 미연결")
+        record_publish_failure()
+        return False
 
     msg = ujson.dumps(obj)
     if isinstance(msg, str):
         msg = msg.encode()
 
-    backoff = 0.5
+    try:
+        gc.collect()
 
-    for attempt in range(4):
-        feed_wdt()
+        if DEBUG_PUBLISH:
+            print("➡️ publish start:", topic, "len=", len(msg), "free=", gc.mem_free())
 
-        if client is None and not mqtt_reconnect_with_backoff():
-            time.sleep(backoff)
-            backoff = min(backoff * 2, 5)
-            continue
+        client.publish(topic, msg)
 
-        if not wifi_ensure():
-            time.sleep(backoff)
-            backoff = min(backoff * 2, 5)
-            continue
+        if DEBUG_PUBLISH:
+            print("✅ publish done :", topic)
 
-        try:
-            gc.collect()
-            if DEBUG_PUBLISH:
-                print("➡️ publish start:", topic, "try=", attempt + 1, "len=", len(msg), "free=", gc.mem_free())
+        publish_success_count += 1
+        record_publish_success()
+        return True
 
-            client.publish(topic, msg)
-
-            if DEBUG_PUBLISH:
-                print("✅ publish done :", topic)
-
-            publish_success_count += 1
-            maybe_rotate_mqtt()
-            record_publish_success()
-            return True
-
-        except Exception as e:
-            print("❗ publish 실패[%d]:" % (attempt + 1), e, "(free=", gc.mem_free(), ")")
-            close_mqtt_client()
-            gc.collect()
-            time.sleep(backoff)
-            backoff = min(backoff * 2, 5)
-
-    record_publish_failure()
-    return False
+    except Exception as e:
+        print("❗ publish 실패:", e, "(free=", gc.mem_free(), ")")
+        close_mqtt_client()
+        gc.collect()
+        record_publish_failure()
+        return False
 
 
 # =========================================================
@@ -631,7 +664,6 @@ def send_water_event():
 # Water sensor polling / debounce
 # =========================================================
 def read_water_raw():
-    # Pull-up input: normal/open = 1, water/high/closed = 0
     return water_switch.value()
 
 
@@ -648,19 +680,26 @@ def is_water_high():
 def retry_pending_abnormal_event(state, now):
     if not state["pending_abnormal_event"]:
         return
+
     if state["current_state"] != "ABNORMAL":
         state["pending_abnormal_event"] = False
         return
+
     if time.ticks_diff(now, state["last_event_retry_ms"]) < EVENT_RETRY_INTERVAL_MS:
+        return
+
+    if wlan is None or (not wlan.isconnected()) or client is None:
         return
 
     print("🔁 water ABNORMAL 이벤트 재전송 시도")
     state["last_event_retry_ms"] = now
+
     ok = send_water_event()
     if ok:
         state["pending_abnormal_event"] = False
     else:
-        print("⚠️ water 이벤트 재전송 실패 → MQTT 연결 초기화")
+        print("⚠️ water 이벤트 재전송 실패 → pending 유지")
+        state["pending_abnormal_event"] = True
         close_mqtt_client()
 
 
@@ -669,10 +708,13 @@ def handle_state_change(state, new_state, now):
     print("💧 상태 변화:", old_state, "->", new_state)
 
     if new_state == "ABNORMAL":
-        ok_event = send_water_event()
+        if wlan is not None and wlan.isconnected() and client is not None:
+            ok_event = send_water_event()
+        else:
+            print("⚠️ ABNORMAL 발생 시점에 MQTT 미연결 → pending으로 유지")
+            ok_event = False
+
         if not ok_event:
-            print("⚠️ water event publish 실패 → pending으로 유지")
-            close_mqtt_client()
             state["pending_abnormal_event"] = True
             state["last_event_retry_ms"] = now
         else:
@@ -681,7 +723,7 @@ def handle_state_change(state, new_state, now):
         short_gap()
 
     else:
-        # NORMAL 복귀는 event topic으로 보내지 않는다.
+        # NORMAL 복귀는 water_level/sensor로 보내지 않는다.
         state["pending_abnormal_event"] = False
 
     ok_status = publish_device_status(
@@ -700,8 +742,6 @@ def handle_state_change(state, new_state, now):
 # Main
 # =========================================================
 def main():
-    global recovery_fail_count
-
     print("====================================")
     print("🚀 BOOT START")
     print("🧾 reset cause =", reset_cause_name())
@@ -725,6 +765,8 @@ def main():
     t_led = time.ticks_ms()
     t_status = time.ticks_ms()
     t_gc = time.ticks_ms()
+    t_mqtt_rotate = time.ticks_ms()
+
     led_on = False
 
     sensor_state = {
@@ -743,24 +785,30 @@ def main():
             set_led(True if sensor_state["current_state"] == "ABNORMAL" else led_on)
             t_led = now
 
+        # 1) Always keep MQTT alive independently from water detection.
+        if wlan is None or (not wlan.isconnected()) or client is None:
+            maintain_mqtt_connection(now)
+
+        # 2) MQTT ping every 30 seconds.
         if time.ticks_diff(now, t_ping) >= PING_INTERVAL_MS:
             print("🔎 keepalive check")
-            ok_wifi = wifi_ensure()
-            ok_mqtt = mqtt_ping() if ok_wifi else False
 
-            if (not ok_wifi) or (not ok_mqtt):
-                if not mqtt_reconnect_with_backoff():
-                    recovery_fail_count += 1
-                    print("⚠️ 복구 실패 누적:", recovery_fail_count)
-                    if recovery_fail_count >= MAX_RECOVERY_FAILS:
-                        hard_recover("water wifi/mqtt stuck")
-                else:
-                    recovery_fail_count = 0
-            else:
-                recovery_fail_count = 0
+            if not wifi_ensure():
+                close_mqtt_client()
+                maintain_mqtt_connection(now)
+
+            elif not mqtt_ping():
+                close_mqtt_client()
+                maintain_mqtt_connection(now)
 
             t_ping = now
 
+        # 3) MQTT forced reconnect every 5 minutes to avoid stale socket.
+        if time.ticks_diff(now, t_mqtt_rotate) >= MQTT_FORCE_RECONNECT_MS:
+            maintain_mqtt_connection(now, force_reconnect=True)
+            t_mqtt_rotate = time.ticks_ms()
+
+        # 4) Status heartbeat every 60 seconds.
         if time.ticks_diff(now, t_status) >= STATUS_HEARTBEAT_MS:
             ok_status = publish_device_status(
                 state="alarm" if sensor_state["current_state"] == "ABNORMAL" else "normal",
@@ -772,6 +820,7 @@ def main():
                 close_mqtt_client()
             t_status = now
 
+        # 5) Water detection.
         new_state = "ABNORMAL" if is_water_high() else "NORMAL"
 
         if new_state != sensor_state["current_state"]:
