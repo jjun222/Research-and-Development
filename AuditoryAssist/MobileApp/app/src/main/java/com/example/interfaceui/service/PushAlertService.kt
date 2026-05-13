@@ -49,22 +49,42 @@ class PushAlertService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         super.onMessageReceived(message)
-        Log.d(TAG, "message: ${message.data} / ${message.notification}")
-
-        val title = message.notification?.title ?: message.data["title"] ?: "알림"
-        val body  = message.notification?.body  ?: message.data["body"]  ?: "내용 없음"
-
-        showLocalNotification(title, body)
-
-        // ★ Room DB에 저장 → [푸시 알림] 화면에서 목록으로 보여줌
+    
+        Log.d(TAG, "message data=${message.data}, notification=${message.notification}")
+    
+        val data = message.data
+    
+        val title = data["title"]
+            ?: message.notification?.title
+            ?: "알림"
+    
+        val body = data["body"]
+            ?: data["message"]
+            ?: message.notification?.body
+            ?: "내용 없음"
+    
+        val receivedAt = data["timestamp_ms"]?.toLongOrNull()
+            ?: System.currentTimeMillis()
+    
         ioScope.launch {
             runCatching {
                 val dao = AppDatabase.getDatabase(applicationContext).notificationDao()
-                dao.insert(NotificationEntity(title = title, message = body))
+    
+                dao.insert(
+                    NotificationEntity(
+                        title = title,
+                        message = body,
+                        createdAt = receivedAt
+                    )
+                )
+    
+                Log.d(TAG, "notification saved to DB: $title / $body / $receivedAt")
             }.onFailure { e ->
                 Log.e(TAG, "save notification to DB failed", e)
             }
         }
+    
+        showLocalNotification(title, body)
     }
 
     private fun createNotificationChannel() {
