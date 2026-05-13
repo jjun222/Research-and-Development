@@ -12,19 +12,28 @@ except Exception:
     from umqtt.simple import MQTTClient
 
 # =========================================================
-# Button sensor / Doorbell publisher
-# Product final - polling based, no publish-silence reset
+# Doorbell Button Sensor - Product Final
 #
 # Hardware:
-#   GPIO1 ---- button ---- GND
+#   GPIO1 ---- Button ---- GND
 #   Internal PULL_UP is used.
 #
-# Behavior:
-#   - doorbell/sensor is published only when the button is pressed.
-#   - No "not pressed" event is published.
-#   - status heartbeat is published periodically for device health.
-#   - No forced reboot only because no button event occurred.
-#   - Button is read by polling, not IRQ.
+# Normal state:
+#   - doorbell/sensor is NOT published.
+#   - status heartbeat is published every 60 seconds.
+#   - MQTT ping check is performed every 30 seconds.
+#   - MQTT connection is refreshed every 5 minutes to avoid stale socket.
+#
+# Button pressed:
+#   - polling debounce confirms the press.
+#   - doorbell/sensor publishes button_pressed.
+#   - priority_class remains routine.
+#
+# Important:
+#   - No publish-silence reset.
+#   - No IRQ.
+#   - Button press does not intentionally start MQTT reconnect.
+#   - If publish fails, event is queued and automatic reconnect loop handles recovery.
 # =========================================================
 
 # =========================
@@ -32,17 +41,21 @@ except Exception:
 # =========================
 BUTTON_PIN = 1
 
-# Polling debounce
-BUTTON_POLL_MS = 20
-BUTTON_STABLE_MS = 80
-BUTTON_EVENT_GAP_MS = 500
-
+# Pull-up input: not pressed = 1, pressed = 0
 button = machine.Pin(BUTTON_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
 
 try:
     onboard_led = machine.Pin("LED", machine.Pin.OUT)
 except Exception:
     onboard_led = None
+
+# =========================
+# Button polling
+# =========================
+BUTTON_POLL_MS = 20
+BUTTON_STABLE_MS = 80
+BUTTON_EVENT_GAP_MS = 500
+MAX_PENDING_BUTTON_EVENTS = 5
 
 # =========================
 # Wi-Fi / MQTT
@@ -60,9 +73,11 @@ STATUS_TOPIC = "interfaceui/status/publisher/" + MQTT_CLIENT_ID
 KEEPALIVE_SEC = 60
 PING_INTERVAL_MS = 30_000
 STATUS_HEARTBEAT_MS = 60_000
+MQTT_FORCE_RECONNECT_MS = 300_000  # 5 minutes
+
 GC_INTERVAL_MS = 20_000
 
-# 30 checks * 0.5 sec = about 15 sec before AP mode
+# 30 checks * 0.5 sec = about 15 seconds before AP mode
 WIFI_RETRY_MAX = 300
 WIFI_RETRY_WAIT_MS = 500
 
@@ -78,9 +93,8 @@ SOFT_BOOT_SETTLE_MS = 3_000
 WIFI_POST_RESET_WAIT_MS = 1_500
 POST_WIFI_CONNECT_SETTLE_MS = 1_000
 
-DEBUG_PUBLISH = False
+DEBUG_PUBLISH = True
 PUBLISH_FAIL_RESET_THRESHOLD = 5
-FORCE_ROTATE_AFTER_PUBLISHES = 120
 
 AP_SSID = "doorbell_setup"
 AP_PW = "123456789"
@@ -117,6 +131,7 @@ wdt = None
 recovery_fail_count = 0
 publish_success_count = 0
 consecutive_publish_failures = 0
+pending_button_events = 0
 
 BOOT_TICKS_MS = time.ticks_ms()
 
@@ -228,9 +243,9 @@ def record_publish_failure():
     consecutive_publish_failures += 1
     print("⚠️ publish 실패 누적:", consecutive_publish_failures)
 
-    # Button sensor is event-based.
+    # Doorbell is an event-based device.
     # Do not reboot only because a publish failed.
-    # Close MQTT socket and let the main loop reconnect.
+    # Close MQTT socket and let the normal reconnect loop recover.
     if consecutive_publish_failures >= PUBLISH_FAIL_RESET_THRESHOLD:
         print("⚠️ publish 실패 누적 초과 → MQTT 연결만 초기화")
         close_mqtt_client()
@@ -307,6 +322,7 @@ def try_connect_wifi(ssid, pw):
         return False
 
     network.WLAN(network.AP_IF).active(False)
+
     if wlan is None:
         wlan = network.WLAN(network.STA_IF)
 
@@ -432,7 +448,7 @@ def startup_wifi_or_portal():
 
 
 # =========================================================
-# MQTT
+# MQTT connection
 # =========================================================
 def close_mqtt_client():
     global client
@@ -505,6 +521,7 @@ def mqtt_ping():
 
 def mqtt_reconnect_with_backoff():
     backoff = 0.5
+
     for attempt in range(MQTT_RECONNECT_MAX):
         feed_wdt()
         print("🔁 MQTT 재연결 시도", attempt + 1, "(free mem =", gc.mem_free(), ")")
@@ -530,60 +547,68 @@ def mqtt_reconnect_with_backoff():
     return False
 
 
-def maybe_rotate_mqtt():
-    global publish_success_count
-    if publish_success_count >= FORCE_ROTATE_AFTER_PUBLISHES:
-        print("♻️ 정기 MQTT 회전 실행 (publish count =", publish_success_count, ")")
-        if mqtt_reconnect_with_backoff():
-            publish_success_count = 0
+def maintain_mqtt_connection(now, force_reconnect=False):
+    global recovery_fail_count
+
+    if force_reconnect:
+        print("♻️ 5분 주기 MQTT 재연결")
+        ok = mqtt_reconnect_with_backoff()
+    elif wlan is None or (not wlan.isconnected()) or client is None:
+        ok = mqtt_reconnect_with_backoff()
+    else:
+        ok = True
+
+    if ok:
+        recovery_fail_count = 0
+        return True
+
+    recovery_fail_count += 1
+    print("⚠️ 복구 실패 누적:", recovery_fail_count)
+
+    if recovery_fail_count >= MAX_RECOVERY_FAILS:
+        hard_recover("doorbell wifi/mqtt stuck")
+
+    return False
 
 
+# =========================================================
+# MQTT publish
+# =========================================================
 def publish_json(topic, obj):
     global publish_success_count
+
+    # Do not reconnect inside publish_json.
+    # Reconnect is handled by the normal maintenance loop.
+    if wlan is None or (not wlan.isconnected()) or client is None:
+        print("⚠️ publish 불가: MQTT/Wi-Fi 미연결")
+        record_publish_failure()
+        return False
 
     msg = ujson.dumps(obj)
     if isinstance(msg, str):
         msg = msg.encode()
 
-    backoff = 0.5
+    try:
+        gc.collect()
 
-    for attempt in range(4):
-        feed_wdt()
+        if DEBUG_PUBLISH:
+            print("➡️ publish start:", topic, "len=", len(msg), "free=", gc.mem_free())
 
-        if not wifi_ensure():
-            time.sleep(backoff)
-            backoff = min(backoff * 2, 5)
-            continue
+        client.publish(topic, msg)
 
-        if client is None and not mqtt_reconnect_with_backoff():
-            time.sleep(backoff)
-            backoff = min(backoff * 2, 5)
-            continue
+        if DEBUG_PUBLISH:
+            print("✅ publish done :", topic)
 
-        try:
-            gc.collect()
-            if DEBUG_PUBLISH:
-                print("➡️ publish start:", topic, "try=", attempt + 1, "len=", len(msg), "free=", gc.mem_free())
+        publish_success_count += 1
+        record_publish_success()
+        return True
 
-            client.publish(topic, msg)
-
-            if DEBUG_PUBLISH:
-                print("✅ publish done :", topic)
-
-            publish_success_count += 1
-            maybe_rotate_mqtt()
-            record_publish_success()
-            return True
-
-        except Exception as e:
-            print("❗ publish 실패[%d]:" % (attempt + 1), e, "(free=", gc.mem_free(), ")")
-            close_mqtt_client()
-            gc.collect()
-            time.sleep(backoff)
-            backoff = min(backoff * 2, 5)
-
-    record_publish_failure()
-    return False
+    except Exception as e:
+        print("❗ publish 실패:", e, "(free=", gc.mem_free(), ")")
+        close_mqtt_client()
+        gc.collect()
+        record_publish_failure()
+        return False
 
 
 # =========================================================
@@ -626,10 +651,40 @@ def send_button_event():
 
 
 # =========================================================
+# Button event queue
+# =========================================================
+def queue_button_event():
+    global pending_button_events
+    if pending_button_events < MAX_PENDING_BUTTON_EVENTS:
+        pending_button_events += 1
+    print("📌 대기 중인 버튼 이벤트:", pending_button_events)
+
+
+def flush_pending_button_events():
+    global pending_button_events
+
+    if pending_button_events <= 0:
+        return
+
+    if wlan is None or (not wlan.isconnected()) or client is None:
+        return
+
+    while pending_button_events > 0:
+        ok = send_button_event()
+        if not ok:
+            close_mqtt_client()
+            return
+
+        pending_button_events -= 1
+        feed_wdt()
+        time.sleep_ms(120)
+        publish_device_status(state="triggered", value=1, reason="pending_event")
+
+
+# =========================================================
 # Button polling
 # =========================================================
 def read_button_raw():
-    # Pull-up input: not pressed = 1, pressed = 0
     return button.value()
 
 
@@ -645,14 +700,12 @@ def update_button_state(state, now):
             state["stable_raw"] = raw
 
             if raw == 0 and not state["pressed_latched"]:
-                # Confirmed press
                 if time.ticks_diff(now, state["last_event_ms"]) >= BUTTON_EVENT_GAP_MS:
                     state["pressed_latched"] = True
                     state["last_event_ms"] = now
                     return True
 
             elif raw == 1:
-                # Released. The next press can generate another event.
                 state["pressed_latched"] = False
 
     return False
@@ -661,23 +714,25 @@ def update_button_state(state, now):
 def handle_button_press():
     print("🔔 버튼 눌림 확정!")
 
-    ok_event = send_button_event()
+    if wlan is not None and wlan.isconnected() and client is not None:
+        ok_event = send_button_event()
 
-    # Small gap between event topic and status topic.
-    feed_wdt()
-    time.sleep_ms(120)
-    feed_wdt()
+        feed_wdt()
+        time.sleep_ms(120)
+        feed_wdt()
 
-    ok_status = publish_device_status(state="triggered", value=1, reason="event")
+        ok_status = publish_device_status(state="triggered", value=1, reason="event")
 
-    if not ok_event:
-        print("⚠️ 버튼 이벤트 publish 실패 → MQTT 재연결 시도")
-        close_mqtt_client()
-        mqtt_reconnect_with_backoff()
+        if not ok_event:
+            print("⚠️ 버튼 이벤트 publish 실패 → 이벤트 대기열 저장")
+            queue_button_event()
 
-    if not ok_status:
-        print("⚠️ 버튼 status publish 실패 → 다음 heartbeat에서 재시도")
-        close_mqtt_client()
+        if not ok_status:
+            print("⚠️ 버튼 status publish 실패 → 다음 heartbeat에서 재시도")
+            close_mqtt_client()
+    else:
+        print("⚠️ 버튼 눌림 시점에 MQTT 미연결 → 이벤트 대기열 저장")
+        queue_button_event()
 
     set_led(True)
     time.sleep_ms(120)
@@ -688,8 +743,6 @@ def handle_button_press():
 # Main
 # =========================================================
 def main():
-    global recovery_fail_count
-
     print("====================================")
     print("🚀 BOOT START")
     print("🧾 reset cause =", reset_cause_name())
@@ -710,9 +763,11 @@ def main():
     print("🔔 버튼 대기 중... polling mode")
 
     t_ping = time.ticks_ms()
-    t_led = time.ticks_ms()
     t_status = time.ticks_ms()
     t_gc = time.ticks_ms()
+    t_led = time.ticks_ms()
+    t_mqtt_rotate = time.ticks_ms()
+
     led_on = False
 
     button_state = {
@@ -733,25 +788,30 @@ def main():
             set_led(led_on)
             t_led = now
 
+        # 1) Always keep the connection alive independently from button press.
+        if wlan is None or (not wlan.isconnected()) or client is None:
+            maintain_mqtt_connection(now)
+
+        # 2) MQTT ping every 30 seconds.
         if time.ticks_diff(now, t_ping) >= PING_INTERVAL_MS:
             print("🔎 keepalive check")
-            ok_wifi = wifi_ensure()
-            ok_mqtt = mqtt_ping() if ok_wifi else False
 
-            if (not ok_wifi) or (not ok_mqtt):
-                if not mqtt_reconnect_with_backoff():
-                    recovery_fail_count += 1
-                    blink_once(200, 200)
-                    print("⚠️ 복구 실패 누적:", recovery_fail_count)
-                    if recovery_fail_count >= MAX_RECOVERY_FAILS:
-                        hard_recover("doorbell wifi/mqtt stuck")
-                else:
-                    recovery_fail_count = 0
-            else:
-                recovery_fail_count = 0
+            if not wifi_ensure():
+                close_mqtt_client()
+                maintain_mqtt_connection(now)
+
+            elif not mqtt_ping():
+                close_mqtt_client()
+                maintain_mqtt_connection(now)
 
             t_ping = now
 
+        # 3) MQTT forced reconnect every 5 minutes to avoid stale socket.
+        if time.ticks_diff(now, t_mqtt_rotate) >= MQTT_FORCE_RECONNECT_MS:
+            maintain_mqtt_connection(now, force_reconnect=True)
+            t_mqtt_rotate = time.ticks_ms()
+
+        # 4) Status heartbeat every 60 seconds.
         if time.ticks_diff(now, t_status) >= STATUS_HEARTBEAT_MS:
             ok_status = publish_device_status(state="normal", value=None, reason="heartbeat")
             if not ok_status:
@@ -759,6 +819,10 @@ def main():
                 close_mqtt_client()
             t_status = now
 
+        # 5) If a previous button event failed, send it after auto recovery.
+        flush_pending_button_events()
+
+        # 6) Button polling.
         if update_button_state(button_state, now):
             handle_button_press()
 
