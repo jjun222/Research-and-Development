@@ -1,7 +1,10 @@
 package com.example.interfaceui
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -33,17 +36,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvAlertMode: TextView
     private lateinit var tvLastReceived: TextView
 
-    private val mainMqttListener: (String, String) -> Unit = { topic, _ ->
-        if (
-            topic.startsWith("alerts/") ||
-            topic == "shz/sensor" ||
-            topic == "mq7/sensor" ||
-            topic == "gas/sensor" ||
-            topic == "AI_fire_alert" ||
-            topic == "water_level/sensor" ||
-            topic == "doorbell/sensor"
-        ) {
-            runOnUiThread {
+    private var isScreenActive = false
+    private var lastConnectedUri: String? = null
+
+    private val mainMqttListener: (String, String) -> Unit = listener@{ topic, _ ->
+        if (!isScreenActive) return@listener
+
+        if (!shouldUpdateLastReceived(topic)) return@listener
+
+        runOnUiThread {
+            if (isScreenActive) {
                 tvLastReceived.text = "마지막 수신: ${nowText()}"
             }
         }
@@ -69,12 +71,27 @@ class MainActivity : AppCompatActivity() {
 
         bindMenuButtons()
         requestPostNotificationIfNeeded()
+        showInitialStatus()
         connectAndStartServices()
     }
 
-    override fun onDestroy() {
+    override fun onStart() {
+        super.onStart()
+        isScreenActive = true
+
+        MqttHelper.instance?.let { helper ->
+            helper.removeMessageListener(mainMqttListener)
+            helper.addMessageListener(mainMqttListener)
+            subscribeHomeTopics(helper)
+        }
+
+        refreshStatusCardFromCurrentState()
+    }
+
+    override fun onStop() {
+        isScreenActive = false
         MqttHelper.instance?.removeMessageListener(mainMqttListener)
-        super.onDestroy()
+        super.onStop()
     }
 
     private fun bindMenuButtons() {
@@ -111,6 +128,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun showInitialStatus() {
+        tvMqttStatus.text = "MQTT 상태: 연결 준비 중"
+        tvBrokerUri.text = "브로커: 확인 중..."
+        tvAlertMode.text = "알림 방식: 확인 중..."
+        tvLastReceived.text = "마지막 수신: 없음"
+    }
+
     private fun connectAndStartServices() {
         tvMqttStatus.text = "MQTT 상태: 연결 중..."
         tvBrokerUri.text = "브로커: 검색 중..."
@@ -118,25 +142,89 @@ class MainActivity : AppCompatActivity() {
 
         BrokerBootstrap.prepare(applicationContext) { result ->
             runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+
                 if (result.connected) {
-                    tvMqttStatus.text = "MQTT 상태: 연결됨"
+                    lastConnectedUri = result.uri
+
+                    tvMqttStatus.text = if (result.discovered) {
+                        "MQTT 상태: 연결됨 / 자동 검색"
+                    } else {
+                        "MQTT 상태: 연결됨 / 저장된 브로커"
+                    }
+
                     tvBrokerUri.text = "브로커: ${result.uri ?: "알 수 없음"}"
-                    tvAlertMode.text = "알림 방식: 로컬 MQTT + Firebase"
+                    tvAlertMode.text = buildAlertModeText()
 
                     val helper = MqttHelper.instance
                     if (helper != null) {
                         helper.removeMessageListener(mainMqttListener)
                         helper.addMessageListener(mainMqttListener)
+                        subscribeHomeTopics(helper)
                     }
 
                     PushAlertService.ensureTokenRegistered(applicationContext)
                     LocalMqttAlertService.start(applicationContext)
                 } else {
+                    lastConnectedUri = null
+
                     tvMqttStatus.text = "MQTT 상태: 연결 실패"
                     tvBrokerUri.text = "브로커: 없음"
-                    tvAlertMode.text = "알림 방식: Firebase만 가능하거나 설정 필요"
+                    tvAlertMode.text = if (isInternetAvailable()) {
+                        "알림 방식: MQTT 설정 필요 / Firebase 대기"
+                    } else {
+                        "알림 방식: 로컬 MQTT 설정 필요 / 인터넷 없음"
+                    }
                 }
             }
+        }
+    }
+
+    private fun refreshStatusCardFromCurrentState() {
+        val uri = lastConnectedUri ?: MqttHelper.instance?.currentServerUri
+
+        if (!uri.isNullOrBlank()) {
+            tvBrokerUri.text = "브로커: $uri"
+
+            if (!tvMqttStatus.text.contains("연결됨")) {
+                tvMqttStatus.text = "MQTT 상태: 연결 정보 있음"
+            }
+
+            tvAlertMode.text = buildAlertModeText()
+        }
+    }
+
+    private fun subscribeHomeTopics(helper: MqttHelper) {
+        listOf(
+            "alerts/#",
+            "interfaceui/status/server",
+            "shz/sensor",
+            "mq7/sensor",
+            "gas/sensor",
+            "AI_fire_alert",
+            "water_level/sensor",
+            "doorbell/sensor"
+        ).forEach { topic ->
+            helper.subscribe(topic, qos = 1)
+        }
+    }
+
+    private fun shouldUpdateLastReceived(topic: String): Boolean {
+        return topic.startsWith("alerts/") ||
+                topic == "interfaceui/status/server" ||
+                topic == "shz/sensor" ||
+                topic == "mq7/sensor" ||
+                topic == "gas/sensor" ||
+                topic == "AI_fire_alert" ||
+                topic == "water_level/sensor" ||
+                topic == "doorbell/sensor"
+    }
+
+    private fun buildAlertModeText(): String {
+        return if (isInternetAvailable()) {
+            "알림 방식: 로컬 MQTT + Firebase"
+        } else {
+            "알림 방식: 로컬 MQTT / Firebase 대기"
         }
     }
 
@@ -151,6 +239,15 @@ class MainActivity : AppCompatActivity() {
                 )
             }
         }
+    }
+
+    private fun isInternetAvailable(): Boolean {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = cm.activeNetwork ?: return false
+        val capabilities = cm.getNetworkCapabilities(network) ?: return false
+
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
     private fun nowText(): String {
