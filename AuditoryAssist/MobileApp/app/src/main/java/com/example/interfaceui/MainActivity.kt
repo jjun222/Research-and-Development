@@ -73,6 +73,13 @@ class MainActivity : AppCompatActivity() {
         BrokerBootstrap.prepare(applicationContext) {
             PushAlertService.ensureTokenRegistered(applicationContext)
         }
+
+        BrokerBootstrap.prepare(applicationContext) { result ->
+            if (result.connected) {
+                PushAlertService.ensureTokenRegistered(applicationContext)
+                PushTokenRegistrar.flushPendingToken(applicationContext)
+            }
+        }
     }
 
     private fun requestPostNotificationIfNeeded() {
