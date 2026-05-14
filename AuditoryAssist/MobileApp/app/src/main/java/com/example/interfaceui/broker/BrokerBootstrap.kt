@@ -6,74 +6,114 @@ import android.os.Looper
 import com.example.interfaceui.MqttHelper
 import com.example.interfaceui.net.BrokerDiscovery
 import com.example.interfaceui.net.BrokerInfo
+import com.example.interfaceui.service.PushTokenRegistrar
+
+data class BrokerConnectResult(
+    val uri: String?,
+    val connected: Boolean,
+    val discovered: Boolean,
+    val errorMessage: String? = null
+)
 
 object BrokerBootstrap {
 
     fun prepare(
         context: Context,
-        onReady: (String) -> Unit = {}
+        onResult: (BrokerConnectResult) -> Unit = {}
     ) {
         val appContext = context.applicationContext
-        val savedUri = BrokerPrefs.getBrokerUri(appContext)
-
-        // 저장된 브로커 URI 기준으로 먼저 helper 준비
-        MqttHelper.init(appContext, savedUri)
+        val savedUri = BrokerPrefs.getBrokerUriOrNull(appContext)
 
         BrokerDiscovery.discoverAll(timeoutMs = 1500) { discovered ->
-            val candidateUri = pickBrokerUri(savedUri, discovered)
+            val candidates = buildCandidateList(savedUri, discovered)
 
             Handler(Looper.getMainLooper()).post {
-                connectWithFallback(
+                connectSequentially(
                     appContext = appContext,
-                    primaryUri = candidateUri,
-                    fallbackUri = savedUri,
-                    onReady = onReady
+                    candidates = candidates,
+                    index = 0,
+                    discoveredUris = discovered.map { it.serverUri }.toSet(),
+                    onResult = onResult
                 )
             }
         }
     }
 
-    private fun pickBrokerUri(
-        savedUri: String,
+    private fun buildCandidateList(
+        savedUri: String?,
         discovered: List<BrokerInfo>
-    ): String {
-        if (discovered.isEmpty()) return savedUri
+    ): List<String> {
+        val result = mutableListOf<String>()
 
-        discovered.firstOrNull { it.serverUri == savedUri }?.let {
-            return it.serverUri
+        if (!savedUri.isNullOrBlank()) {
+            result.add(savedUri)
         }
 
-        // 1차 목표: 자동 발견되면 첫 번째 브로커로 자동 연결
-        return discovered.first().serverUri
+        discovered.forEach { info ->
+            if (info.serverUri !in result) {
+                result.add(info.serverUri)
+            }
+        }
+
+        return result
     }
 
-    private fun connectWithFallback(
+    private fun connectSequentially(
         appContext: Context,
-        primaryUri: String,
-        fallbackUri: String,
-        onReady: (String) -> Unit
+        candidates: List<String>,
+        index: Int,
+        discoveredUris: Set<String>,
+        onResult: (BrokerConnectResult) -> Unit
     ) {
-        val primary = MqttHelper.switchServer(appContext, primaryUri)
-        primary.connect(
-            onConnected = {
-                BrokerPrefs.saveBrokerUri(appContext, primaryUri)
-                onReady(primaryUri)
-            },
-            onError = {
-                if (primaryUri == fallbackUri) {
-                    onReady(fallbackUri)
-                    return@connect
-                }
+        if (candidates.isEmpty()) {
+            onResult(
+                BrokerConnectResult(
+                    uri = null,
+                    connected = false,
+                    discovered = false,
+                    errorMessage = "저장된 브로커도 없고, 자동 검색된 브로커도 없습니다."
+                )
+            )
+            return
+        }
 
-                val fallback = MqttHelper.switchServer(appContext, fallbackUri)
-                fallback.connect(
-                    onConnected = {
-                        BrokerPrefs.saveBrokerUri(appContext, fallbackUri)
-                        onReady(fallbackUri)
-                    },
-                    onError = {
-                        onReady(fallbackUri)
-                    }
+        if (index >= candidates.size) {
+            onResult(
+                BrokerConnectResult(
+                    uri = null,
+                    connected = false,
+                    discovered = false,
+                    errorMessage = "모든 MQTT Broker 연결 시도가 실패했습니다."
+                )
+            )
+            return
+        }
+
+        val uri = candidates[index]
+        val helper = MqttHelper.switchServer(appContext, uri)
+
+        helper.connect(
+            onConnected = {
+                BrokerPrefs.saveBrokerUri(appContext, uri)
+
+                PushTokenRegistrar.flushPendingToken(appContext)
+
+                onResult(
+                    BrokerConnectResult(
+                        uri = uri,
+                        connected = true,
+                        discovered = uri in discoveredUris,
+                        errorMessage = null
+                    )
+                )
+            },
+            onError = { e ->
+                connectSequentially(
+                    appContext = appContext,
+                    candidates = candidates,
+                    index = index + 1,
+                    discoveredUris = discoveredUris,
+                    onResult = onResult
                 )
             }
         )
