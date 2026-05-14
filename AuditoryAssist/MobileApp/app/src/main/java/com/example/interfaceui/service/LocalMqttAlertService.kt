@@ -413,9 +413,35 @@ class LocalMqttAlertService : Service() {
     }
 
     private fun showEmergencyNotification(title: String, body: String) {
-        // 1차 구현에서는 고우선순위 알림만 띄운다.
-        // 다음 단계에서 EmergencyAlertActivity를 fullScreenIntent로 연결하면 된다.
-        showSystemNotification("긴급: $title", body)
+        if (!canPostNotification()) return
+
+        val intent = Intent(this, com.example.interfaceui.ui1.EmergencyAlertActivity::class.java).apply {
+            putExtra("title", title)
+            putExtra("body", body)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            200,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_ALERT)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("긴급: $title")
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setContentIntent(pendingIntent)
+            .setFullScreenIntent(pendingIntent, true)
+            .setAutoCancel(true)
+            .build()
+
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(System.currentTimeMillis().toInt(), notification)
     }
 
     private fun canPostNotification(): Boolean {
