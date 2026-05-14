@@ -1,4 +1,3 @@
-
 import gc
 import os
 import socket
@@ -9,12 +8,12 @@ import network
 import ubinascii
 import ujson
 from micropython import const
-from machine import PWM, Pin
+from machine import Pin
 
 try:
-    from umqtt.robust import MQTTClient
+    from robust import MQTTClient
 except Exception:
-    from umqtt.simple import MQTTClient
+    from simple import MQTTClient
 
 # =========================================================
 # Device / MQTT configuration
@@ -41,9 +40,9 @@ TOPIC_LOG = f"interfaceui/logs/subscriber/{DEVICE_ID}"
 # =========================================================
 # Runtime / safety configuration
 # =========================================================
-WIFI_RETRY_MAX = const(30)
+WIFI_RETRY_MAX = const(300)
 WIFI_RETRY_WAIT_MS = const(500)
-COLD_BOOT_SETTLE_MS = const(12000)
+COLD_BOOT_SETTLE_MS = const(3000)
 SOFT_BOOT_SETTLE_MS = const(3000)
 WIFI_POST_RESET_WAIT_MS = const(1500)
 POST_WIFI_CONNECT_SETTLE_MS = const(1000)
@@ -92,15 +91,10 @@ try:
 except Exception:
     LED = None
 
-PWM_FREQ = const(1000)
-ENA = PWM(Pin(15))
-IN1 = Pin(14, Pin.OUT)
-IN2 = Pin(13, Pin.OUT)
-ENB = PWM(Pin(12))
-IN3 = Pin(11, Pin.OUT)
-IN4 = Pin(10, Pin.OUT)
-ENA.freq(PWM_FREQ)
-ENB.freq(PWM_FREQ)
+IN1 = Pin(15, Pin.OUT)
+IN2 = Pin(14, Pin.OUT)
+IN3 = Pin(13, Pin.OUT)
+IN4 = Pin(12, Pin.OUT)
 
 _pattern_state = {
     "active": False,
@@ -205,8 +199,8 @@ def maybe_gc(last_gc_ms):
 # Motor helpers
 # =========================================================
 def set_motor_forward():
-    IN1.value(1)
-    IN2.value(0)
+    IN1.value(0)
+    IN2.value(1)
     IN3.value(1)
     IN4.value(0)
 
@@ -217,8 +211,6 @@ def set_power_ratio(ratio):
         duty = 65535
     else:
         duty = int(65535 * ratio)
-    ENA.duty_u16(duty)
-    ENB.duty_u16(duty)
 
 def stop_all():
     set_power_ratio(0.0)
