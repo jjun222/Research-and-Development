@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
@@ -21,8 +22,32 @@ import com.example.interfaceui.ui1.LogActivity
 import com.example.interfaceui.ui1.NotificationActivity
 import com.example.interfaceui.ui1.SettingActivity
 import com.example.interfaceui.ui1.SituationStatusActivity
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
+
+    private lateinit var tvMqttStatus: TextView
+    private lateinit var tvBrokerUri: TextView
+    private lateinit var tvAlertMode: TextView
+    private lateinit var tvLastReceived: TextView
+
+    private val mainMqttListener: (String, String) -> Unit = { topic, _ ->
+        if (
+            topic.startsWith("alerts/") ||
+            topic == "shz/sensor" ||
+            topic == "mq7/sensor" ||
+            topic == "gas/sensor" ||
+            topic == "AI_fire_alert" ||
+            topic == "water_level/sensor" ||
+            topic == "doorbell/sensor"
+        ) {
+            runOnUiThread {
+                tvLastReceived.text = "마지막 수신: ${nowText()}"
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,6 +62,22 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
+        tvMqttStatus = findViewById(R.id.tvMqttStatus)
+        tvBrokerUri = findViewById(R.id.tvBrokerUri)
+        tvAlertMode = findViewById(R.id.tvAlertMode)
+        tvLastReceived = findViewById(R.id.tvLastReceived)
+
+        bindMenuButtons()
+        requestPostNotificationIfNeeded()
+        connectAndStartServices()
+    }
+
+    override fun onDestroy() {
+        MqttHelper.instance?.removeMessageListener(mainMqttListener)
+        super.onDestroy()
+    }
+
+    private fun bindMenuButtons() {
         findViewById<View>(R.id.btnMoveSituationStatus).setOnClickListener {
             startActivity(Intent(this, SituationStatusActivity::class.java))
         }
@@ -68,13 +109,33 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnMoveWifiSettings).setOnClickListener {
             startActivity(Intent(this, WifiSettingsActivity::class.java))
         }
+    }
 
-        requestPostNotificationIfNeeded()
+    private fun connectAndStartServices() {
+        tvMqttStatus.text = "MQTT 상태: 연결 중..."
+        tvBrokerUri.text = "브로커: 검색 중..."
+        tvAlertMode.text = "알림 방식: 확인 중..."
 
         BrokerBootstrap.prepare(applicationContext) { result ->
-            if (result.connected) {
-                PushAlertService.ensureTokenRegistered(applicationContext)
-                LocalMqttAlertService.start(applicationContext)
+            runOnUiThread {
+                if (result.connected) {
+                    tvMqttStatus.text = "MQTT 상태: 연결됨"
+                    tvBrokerUri.text = "브로커: ${result.uri ?: "알 수 없음"}"
+                    tvAlertMode.text = "알림 방식: 로컬 MQTT + Firebase"
+
+                    val helper = MqttHelper.instance
+                    if (helper != null) {
+                        helper.removeMessageListener(mainMqttListener)
+                        helper.addMessageListener(mainMqttListener)
+                    }
+
+                    PushAlertService.ensureTokenRegistered(applicationContext)
+                    LocalMqttAlertService.start(applicationContext)
+                } else {
+                    tvMqttStatus.text = "MQTT 상태: 연결 실패"
+                    tvBrokerUri.text = "브로커: 없음"
+                    tvAlertMode.text = "알림 방식: Firebase만 가능하거나 설정 필요"
+                }
             }
         }
     }
@@ -90,5 +151,9 @@ class MainActivity : AppCompatActivity() {
                 )
             }
         }
+    }
+
+    private fun nowText(): String {
+        return SimpleDateFormat("HH:mm:ss", Locale.KOREA).format(Date())
     }
 }
