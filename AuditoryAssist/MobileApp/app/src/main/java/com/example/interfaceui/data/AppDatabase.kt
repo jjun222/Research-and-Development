@@ -2,7 +2,6 @@ package com.example.interfaceui.data
 
 import android.content.Context
 import androidx.room.Database
-import androidx.room.JournalMode
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
@@ -52,7 +51,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "app_database"
                 )
-                    .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
+                    .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
                     .addMigrations(MIGRATION_1_2)
                     .build()
                     .also { INSTANCE = it }
