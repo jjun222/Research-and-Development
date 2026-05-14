@@ -1,5 +1,6 @@
 package com.example.interfaceui.ui1
 
+import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
@@ -9,6 +10,7 @@ import androidx.core.graphics.drawable.DrawableCompat
 import androidx.core.widget.doOnTextChanged
 import com.example.interfaceui.MqttHelper
 import com.example.interfaceui.R
+import com.example.interfaceui.WifiSettingsActivity
 import com.example.interfaceui.data.DevicePrefs
 import com.example.interfaceui.alias.DeviceAlias
 import com.google.android.material.button.MaterialButton
@@ -18,6 +20,7 @@ import com.google.android.material.textfield.TextInputEditText
 import org.json.JSONObject
 import yuku.ambilwarna.AmbilWarnaDialog
 import java.util.Locale
+import com.example.interfaceui.broker.BrokerBootstrap
 
 class SettingActivity : AppCompatActivity() {
 
@@ -73,7 +76,9 @@ class SettingActivity : AppCompatActivity() {
         btnPickColor.setOnClickListener {
             AmbilWarnaDialog(this, currentColor, object : AmbilWarnaDialog.OnAmbilWarnaListener {
                 override fun onCancel(dialog: AmbilWarnaDialog) {}
-                override fun onOk(dialog: AmbilWarnaDialog, color: Int) { setColor(color, Source.PICKER) }
+                override fun onOk(dialog: AmbilWarnaDialog, color: Int) {
+                    setColor(color, Source.PICKER)
+                }
             }).show()
         }
 
@@ -92,39 +97,56 @@ class SettingActivity : AppCompatActivity() {
                 currentBrightness = progress
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) { saveBrightness() }
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                saveBrightness()
+            }
         })
 
         btnApply.setOnClickListener {
             val target = selectedTargetFromSpinner() // id or null(ALL)
             val ok = publishMood(currentColor, currentBrightness, target)
-            Toast.makeText(this, if (ok) "적용되었습니다." else "MQTT 연결이 되지 않았습니다.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this,
+                if (ok) "적용되었습니다." else "MQTT 연결이 되지 않았습니다.",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+
+        // 🔵 Wi-Fi / 브로커 설정 화면으로 이동
+        findViewById<MaterialButton>(R.id.btnWifiSettings)?.setOnClickListener {
+            startActivity(Intent(this, WifiSettingsActivity::class.java))
         }
     }
 
     override fun onStart() {
         super.onStart()
-        MqttHelper.connect(
-            context = applicationContext,
-            onConnected = { ok ->
-                if (!ok) {
-                    runOnUiThread { Toast.makeText(this, "MQTT 연결 실패", Toast.LENGTH_SHORT).show() }
-                } else {
-                    MqttHelper.instance?.subscribe("devices/+/color/ack", qos = 1)
-                    MqttHelper.instance?.subscribe("devices/+/set_mood/ack", qos = 1)
+
+        BrokerBootstrap.prepare(applicationContext) { result ->
+            runOnUiThread {
+                if (!result.connected) {
+                    Toast.makeText(
+                        this,
+                        result.errorMessage ?: "MQTT 연결 실패",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return@runOnUiThread
                 }
-            },
-            onMessage = { _, _ -> }
-        )
+
+                MqttHelper.instance?.subscribe("devices/+/color/ack", qos = 1)
+                MqttHelper.instance?.subscribe("devices/+/set_mood/ack", qos = 1)
+            }
+        }
     }
 
     /** 스피너: 첫 항목은 ALL(=null), 이후 화이트리스트 내 저장 장치만 별칭으로 표시 */
     private fun populateDeviceSpinner() {
         val ids = DevicePrefs.getDevices(this)
-            .filter { DeviceAlias.shouldShow(it) }  // ✅ 컨텍스트 인자 제거
+            .filter { DeviceAlias.shouldShow(it) }
 
         val options = mutableListOf(DeviceOption(null, "ALL"))
-        ids.forEach { id -> options += DeviceOption(id, DeviceAlias.resolve(this, id, id)) }
+        ids.forEach { id ->
+            options += DeviceOption(id, DeviceAlias.resolve(this, id, id))
+        }
 
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options)
         deviceSpinner.adapter = adapter
@@ -135,10 +157,16 @@ class SettingActivity : AppCompatActivity() {
         deviceSpinner.setSelection(if (idx >= 0) idx else 0)
 
         deviceSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+            override fun onItemSelected(
+                parent: AdapterView<*>?,
+                view: View?,
+                position: Int,
+                id: Long
+            ) {
                 val pick = options[position]
                 DevicePrefs.setSelected(this@SettingActivity, pick.id) // null이면 ALL
             }
+
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
     }
@@ -160,8 +188,13 @@ class SettingActivity : AppCompatActivity() {
         saveColor()
     }
 
-    private fun saveColor() { prefs.edit().putInt("last_color", currentColor).apply() }
-    private fun saveBrightness() { prefs.edit().putInt("last_brightness", currentBrightness).apply() }
+    private fun saveColor() {
+        prefs.edit().putInt("last_color", currentColor).apply()
+    }
+
+    private fun saveBrightness() {
+        prefs.edit().putInt("last_brightness", currentBrightness).apply()
+    }
 
     private fun publishMood(colorInt: Int, brightness: Int, target: String? = null): Boolean {
         val hex = String.format("#%06X", 0xFFFFFF and colorInt)
@@ -189,7 +222,9 @@ class SettingActivity : AppCompatActivity() {
 
     private fun normalizeHex(input: String): String? {
         var s = input.trim().removePrefix("#").uppercase(Locale.US)
-        if (s.length == 3) s = "${s[0]}${s[0]}${s[1]}${s[1]}${s[2]}${s[2]}"
+        if (s.length == 3) {
+            s = "${s[0]}${s[0]}${s[1]}${s[1]}${s[2]}${s[2]}"
+        }
         if (s.length != 6) return null
         if (!s.matches(Regex("[0-9A-F]{6}"))) return null
         return s
