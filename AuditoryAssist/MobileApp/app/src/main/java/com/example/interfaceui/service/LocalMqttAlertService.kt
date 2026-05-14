@@ -193,7 +193,7 @@ class LocalMqttAlertService : Service() {
 
     private fun buildServiceNotification() =
         NotificationCompat.Builder(this, CHANNEL_SERVICE)
-            .setSmallIcon(R.drawable.ic_notifications_24)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("AuditoryAssist 로컬 알림 실행 중")
             .setContentText("인터넷이 없어도 MQTT 알림을 수신합니다.")
             .setOngoing(true)
@@ -211,7 +211,7 @@ class LocalMqttAlertService : Service() {
         )
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ALERT)
-            .setSmallIcon(R.drawable.ic_notifications_24)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
