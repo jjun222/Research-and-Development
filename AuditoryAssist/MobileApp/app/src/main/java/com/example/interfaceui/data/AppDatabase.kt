@@ -2,8 +2,11 @@ package com.example.interfaceui.data
 
 import android.content.Context
 import androidx.room.Database
+import androidx.room.JournalMode
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.interfaceui.data.db.PushAlertDao
 import com.example.interfaceui.data.db.PushAlertEntity
 
@@ -11,34 +14,50 @@ import com.example.interfaceui.data.db.PushAlertEntity
     entities = [
         NotificationEntity::class,
         DeviceEntity::class,
-        PushAlertEntity::class,       // ★ 추가
+        PushAlertEntity::class,
     ],
-    version = 2,                      // ★ 엔티티 추가됐으니 버전 업
-    exportSchema = false
+    version = 2,
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun notificationDao(): NotificationDao
     abstract fun deviceDao(): DeviceDao
-    abstract fun pushAlertDao(): PushAlertDao   // ★ 추가
+    abstract fun pushAlertDao(): PushAlertDao
 
     companion object {
-        @Volatile private var INSTANCE: AppDatabase? = null
+
+        @Volatile
+        private var INSTANCE: AppDatabase? = null
+
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `push_alerts` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `body` TEXT NOT NULL,
+                        `ts` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
 
         fun getDatabase(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
-                Room.databaseBuilder(
+                INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "app_database"
                 )
                     .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
-                    .fallbackToDestructiveMigration() // 개발 단계: 스키마 바뀌면 초기화
+                    .addMigrations(MIGRATION_1_2)
                     .build()
                     .also { INSTANCE = it }
             }
 
-        // 예전 코드 호환용 별칭
         fun get(context: Context): AppDatabase = getDatabase(context)
     }
 }
