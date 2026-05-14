@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.interfaceui.MqttHelper
 import com.example.interfaceui.R
 import com.example.interfaceui.alias.DeviceAlias
+import com.example.interfaceui.broker.BrokerBootstrap
 import org.json.JSONObject
 
 class CheckActivity : AppCompatActivity() {
@@ -32,12 +33,29 @@ class CheckActivity : AppCompatActivity() {
     // canonicalId -> Status
     private val map = linkedMapOf<String, NodeStatus>()
 
+    private var isScreenActive = false
+
     // 1초마다 신선도 체크
     private val tickHandler = Handler(Looper.getMainLooper())
     private val tick = object : Runnable {
         override fun run() {
             adapter.notifyDataSetChanged()
             tickHandler.postDelayed(this, 1000L)
+        }
+    }
+
+    private val statusListener: (String, String) -> Unit = listener@{ topic, payload ->
+        if (!topic.startsWith("interfaceui/status/")) return@listener
+
+        val status = parseStatus(topic, payload)
+
+        // 화이트리스트 밖 ID는 표시하지 않음
+        if (!DeviceAlias.shouldShow(status.id)) return@listener
+
+        runOnUiThread {
+            if (isScreenActive) {
+                upsert(status)
+            }
         }
     }
 
@@ -59,45 +77,59 @@ class CheckActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        isScreenActive = true
 
+        tickHandler.removeCallbacks(tick)
         tickHandler.post(tick)
 
-        MqttHelper.connect(
-            context = applicationContext,
-            onConnected = { ok ->
-                runOnUiThread {
-                    if (!ok) Toast.makeText(this, "MQTT 연결 실패", Toast.LENGTH_SHORT).show()
+        BrokerBootstrap.prepare(applicationContext) { result ->
+            runOnUiThread {
+                if (!isScreenActive) return@runOnUiThread
+
+                if (!result.connected) {
+                    Toast.makeText(
+                        this,
+                        result.errorMessage ?: "MQTT 연결 실패",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return@runOnUiThread
                 }
-                if (ok) {
-                    MqttHelper.instance?.subscribe("interfaceui/status/#", qos = 1)
-                }
-            },
-            onMessage = { topic, payload ->
-                if (!topic.startsWith("interfaceui/status/")) return@connect
-                val status = parseStatus(topic, payload)
-                // ⬇︎ 화이트리스트 밖(ID 미허용)은 표시 안 함 (Neopixel_3/4 등 숨김)
-                if (!DeviceAlias.shouldShow(status.id)) return@connect
-                runOnUiThread { upsert(status) }
+
+                val helper = MqttHelper.instance ?: return@runOnUiThread
+
+                // 중복 등록 방지
+                helper.removeMessageListener(statusListener)
+                helper.addMessageListener(statusListener)
+
+                helper.subscribe("interfaceui/status/#", qos = 1)
             }
-        )
+        }
     }
 
     override fun onStop() {
-        super.onStop()
+        isScreenActive = false
+        MqttHelper.instance?.removeMessageListener(statusListener)
         tickHandler.removeCallbacks(tick)
+        super.onStop()
     }
 
-    /** 토픽 + JSON/텍스트 → NodeStatus
-     *  - ts_ms(밀리초) → 초로 환산
-     *  - ts 없으면 0
-     *  - 항상 수신시각(seenSec)을 현재초로 기록 → 텍스트 "online"만 와도 신선도 판단 가능
+    /**
+     * 토픽 + JSON/텍스트 → NodeStatus
+     * - ts_ms(밀리초) → 초로 환산
+     * - ts 없으면 0
+     * - 항상 수신시각(seenSec)을 현재초로 기록 → 텍스트 "online"만 와도 신선도 판단 가능
      */
     private fun parseStatus(topic: String, raw: String): NodeStatus {
         val parts = topic.split('/')
         val type = (parts.getOrNull(2) ?: "unknown").lowercase()
         val tail = parts.drop(3).joinToString("/")
 
-        val fallbackIdRaw = if (type == "server") "server" else (if (tail.isEmpty()) "unknown" else tail)
+        val fallbackIdRaw = if (type == "server") {
+            "server"
+        } else {
+            if (tail.isEmpty()) "unknown" else tail
+        }
+
         val fallbackId = DeviceAlias.canonicalId(fallbackIdRaw)
         val nowSec = System.currentTimeMillis() / 1000
 
@@ -107,18 +139,18 @@ class CheckActivity : AppCompatActivity() {
             val id = DeviceAlias.canonicalId(idRaw)
 
             val defaultName = when (type) {
-                "server"     -> "MQTT 판단 서버"
-                "publisher"  -> if (id.isEmpty()) "Publisher" else id
+                "server" -> "MQTT 판단 서버"
+                "publisher" -> if (id.isEmpty()) "Publisher" else id
                 "subscriber" -> if (id.isEmpty()) "Subscriber" else id
-                else         -> if (id.isEmpty()) "Unknown" else id
+                else -> if (id.isEmpty()) "Unknown" else id
             }
+
             val nameFromPayload = j.optString("name", defaultName)
 
             val online = j.optString("status", "")
                 .equals("online", true) || j.optBoolean("online", false)
 
-            // ts_ms(밀리초) 우선, 없으면 ts(초), 둘 다 없으면 0
-            val tsMs  = if (j.has("ts_ms")) j.optLong("ts_ms", 0L) else 0L
+            val tsMs = if (j.has("ts_ms")) j.optLong("ts_ms", 0L) else 0L
             val tsSec = when {
                 tsMs > 0L -> tsMs / 1000L
                 j.has("ts") -> j.optLong("ts", 0L)
@@ -135,13 +167,14 @@ class CheckActivity : AppCompatActivity() {
             )
         } catch (_: Exception) {
             val online = raw.equals("online", true)
+
             NodeStatus(
                 id = fallbackId,
                 nameOrig = when (type) {
-                    "server"     -> "MQTT 판단 서버"
-                    "publisher"  -> fallbackId
+                    "server" -> "MQTT 판단 서버"
+                    "publisher" -> fallbackId
                     "subscriber" -> fallbackId
-                    else         -> fallbackId
+                    else -> fallbackId
                 },
                 type = type,
                 online = online,
@@ -155,9 +188,13 @@ class CheckActivity : AppCompatActivity() {
     private fun upsert(s: NodeStatus) {
         val key = s.key()
         val old = map[key]
+
         val merged = if (old != null) {
-            s.copy(tsSec = if (s.tsSec == 0L) old.tsSec else s.tsSec)  // 원격 ts 보존
-        } else s
+            s.copy(tsSec = if (s.tsSec == 0L) old.tsSec else s.tsSec)
+        } else {
+            s
+        }
+
         map[key] = merged
         adapter.submitList(map.values.toList())
     }
@@ -168,10 +205,13 @@ class CheckActivity : AppCompatActivity() {
             override fun areItemsTheSame(o: NodeStatus, n: NodeStatus) = o.key() == n.key()
             override fun areContentsTheSame(o: NodeStatus, n: NodeStatus) = o == n
         }) {
+
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): StatusVH {
-            val v = LayoutInflater.from(parent.context).inflate(R.layout.item_status, parent, false)
+            val v = LayoutInflater.from(parent.context)
+                .inflate(R.layout.item_status, parent, false)
             return StatusVH(v)
         }
+
         override fun onBindViewHolder(h: StatusVH, pos: Int) = h.bind(getItem(pos))
     }
 
@@ -182,24 +222,28 @@ class CheckActivity : AppCompatActivity() {
         private val dot = v.findViewById<View>(R.id.dot)
 
         fun bind(s: NodeStatus) {
-            // 표시는 항상 별칭 우선
             val displayName = DeviceAlias.resolve(itemView.context, s.id, s.nameOrig)
+
             tvName.text = displayName
             tvDesc.text = "${s.type} / ${s.id}"
 
             val ctx = itemView.context
             val green = ContextCompat.getColor(ctx, android.R.color.holo_green_light)
-            val red   = ContextCompat.getColor(ctx, android.R.color.holo_red_light)
+            val red = ContextCompat.getColor(ctx, android.R.color.holo_red_light)
 
             val nowSec = System.currentTimeMillis() / 1000
             val ttl = if (s.type == "server") TTL_SERVER_SEC else TTL_DEVICE_SEC
 
-            // ▶ 신선도 판단: tsSec(원격시간)과 seenSec(수신시간) 중 '더 최신' 기준
             val basis = maxOf(s.tsSec, s.seenSec)
             val fresh = (basis > 0L) && (nowSec - basis <= ttl)
             val showOnline = s.online && fresh
 
-            val (txt, color) = if (showOnline) "온라인" to green else "오프라인" to red
+            val (txt, color) = if (showOnline) {
+                "온라인" to green
+            } else {
+                "오프라인" to red
+            }
+
             tvStatus.text = txt
             dot.background.setColorFilter(color, PorterDuff.Mode.SRC_IN)
         }
@@ -207,12 +251,12 @@ class CheckActivity : AppCompatActivity() {
 
     private data class NodeStatus(
         val id: String,
-        val nameOrig: String,   // payload에서 온 원래 이름(별칭 적용 전)
-        val type: String,       // "server" | "publisher" | "subscriber" | "unknown"
+        val nameOrig: String,
+        val type: String,
         val online: Boolean,
-        val tsSec: Long,        // 원격에서 보낸 Unix seconds (0=없음)
-        val seenSec: Long       // 클라이언트가 마지막으로 이 노드를 "봤던" 시각(초)
+        val tsSec: Long,
+        val seenSec: Long
     ) {
-        fun key() = "${type.lowercase()}|$id"  // canonicalId 기반
+        fun key() = "${type.lowercase()}|$id"
     }
 }
