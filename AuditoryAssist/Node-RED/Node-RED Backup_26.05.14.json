@@ -773,6 +773,68 @@
         "className": ""
     },
     {
+        "id": "a7b6662885cb7a4b",
+        "type": "mqtt-broker",
+        "name": "센서 상태 확인",
+        "broker": "${MQTT_BROKER_HOST}",
+        "port": "${MQTT_BROKER_PORT}",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "18826b3902b60dc2",
+        "type": "mqtt-broker",
+        "name": "가스 센서 상태 확인",
+        "broker": "${MQTT_BROKER_HOST}",
+        "port": "${MQTT_BROKER_PORT}",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
         "id": "0f7ab0ba64b636bf",
         "type": "mqtt in",
         "z": "97d31c7c54994fe7",
@@ -1787,8 +1849,8 @@
         "resendOnRefresh": true,
         "templateScope": "global",
         "className": "",
-        "x": 1050,
-        "y": 100,
+        "x": 1430,
+        "y": 180,
         "wires": [
             []
         ]
@@ -2386,7 +2448,196 @@
         "wires": []
     },
     {
-        "id": "6d00e232961d05b7",
+        "id": "37893f12fc8cec1b",
+        "type": "mqtt in",
+        "z": "97d31c7c54994fe7",
+        "name": "가스 센서 상태 확인",
+        "topic": "interfaceui/status/publisher/gas_sensor_pico",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "18826b3902b60dc2",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 2300,
+        "wires": [
+            [
+                "361061d2413fc84a"
+            ]
+        ]
+    },
+    {
+        "id": "361061d2413fc84a",
+        "type": "json",
+        "z": "97d31c7c54994fe7",
+        "name": "",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 330,
+        "y": 2300,
+        "wires": [
+            [
+                "d32aa30797df6ffa"
+            ]
+        ]
+    },
+    {
+        "id": "d32aa30797df6ffa",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "가스 센서",
+        "func": "let d = msg.payload;\n\n// 혹시 문자열이면 한번 더 파싱\nif (typeof d === \"string\") {\n    try { d = JSON.parse(d); } catch (e) { return null; }\n}\n\nconst out = {\n    id: d.id || \"gas_sensor_pico\",\n    online: true,\n    wifi: d.wifi === true,\n    mqtt: d.mqtt === true,\n    ip: d.ip || \"\",\n    state: d.state || \"\",\n    value: d.value,\n    reason: d.reason || \"\",\n    ts: d.ts || \"\"\n};\n\n// 마지막 정상 상태 저장\nflow.set(\"gas_status_last\", out);\n\nmsg.payload = out;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 480,
+        "y": 2300,
+        "wires": [
+            [
+                "e4a8f4aa7faebff9"
+            ]
+        ]
+    },
+    {
+        "id": "e4a8f4aa7faebff9",
+        "type": "trigger",
+        "z": "97d31c7c54994fe7",
+        "name": "",
+        "op1": "1",
+        "op2": "0",
+        "op1type": "str",
+        "op2type": "str",
+        "duration": "25",
+        "extend": true,
+        "overrideDelay": false,
+        "units": "s",
+        "reset": "",
+        "bytopic": "all",
+        "topic": "topic",
+        "outputs": 1,
+        "x": 650,
+        "y": 2300,
+        "wires": [
+            [
+                "cc9f7bcc510a5821"
+            ]
+        ]
+    },
+    {
+        "id": "cc9f7bcc510a5821",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "가스 센서 online/offline 변환",
+        "func": "let last = flow.get(\"gas_status_last\") || {\n    id: \"gas_sensor_pico\",\n    ip: \"\",\n    state: \"\",\n    value: \"\",\n    ts: \"\"\n};\n\n// trigger에서 \"1\", \"0\" 문자열로 올 수도 있으니 숫자로 통일\nlet v = msg.payload;\nif (typeof v === \"string\") {\n    v = v.trim();\n    if (v === \"1\") v = 1;\n    else if (v === \"0\") v = 0;\n}\n\n// ONLINE\nif (v === 1) {\n    last.online = true;\n    msg.payload = last;\n    return msg;\n}\n\n// OFFLINE\nif (v === 0) {\n    last.online = false;\n    last.state = \"offline\";\n    msg.payload = last;\n    return msg;\n}\n\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 880,
+        "y": 2300,
+        "wires": [
+            [
+                "23ddf4bbe5674bad"
+            ]
+        ]
+    },
+    {
+        "id": "23ddf4bbe5674bad",
+        "type": "ui_template",
+        "z": "97d31c7c54994fe7",
+        "group": "de908ae53bcedf13",
+        "name": "",
+        "order": 2,
+        "width": 0,
+        "height": 0,
+        "format": "<div style=\"display:flex; align-items:center; gap:12px; padding:6px 0;\">\n    <div style=\"\n      width:18px;\n      height:18px;\n      border-radius:50%;\n      background: {{msg.payload.online ? '#2e7d32' : '#c62828'}};\n      box-shadow: 0 0 8px {{msg.payload.online ? '#2e7d32' : '#c62828'}};\n      flex:0 0 18px;\n  \"></div>\n\n    <div style=\"line-height:1.4;\">\n        <div style=\"font-weight:700;\">\n            {{msg.payload.id}}\n        </div>\n        <div style=\"font-size:13px; color:#555;\">\n            {{msg.payload.online ? \"ONLINE\" : \"OFFLINE\"}} |\n            상태: {{msg.payload.state || \"-\"}} |\n            값: {{msg.payload.value !== undefined ? msg.payload.value : \"-\"}}\n        </div>\n        <div style=\"font-size:12px; color:#888;\">\n            시간: {{msg.payload.ts || \"-\"}}\n        </div>\n    </div>\n</div>",
+        "storeOutMessages": true,
+        "fwdInMessages": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 1100,
+        "y": 2300,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "bb1c44a6ea9e7cf9",
+        "type": "ui_button",
+        "z": "97d31c7c54994fe7",
+        "name": "화재 트리거 버튼",
+        "group": "54d4f0f410edbf78",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "passthru": false,
+        "label": "화재 트리거",
+        "tooltip": "",
+        "color": "",
+        "bgcolor": "",
+        "className": "",
+        "icon": "",
+        "payload": "1",
+        "payloadType": "str",
+        "topic": "topic",
+        "topicType": "msg",
+        "x": 820,
+        "y": 40,
+        "wires": [
+            [
+                "cd1bd198e6b27f56"
+            ]
+        ]
+    },
+    {
+        "id": "cd1bd198e6b27f56",
+        "type": "function",
+        "z": "97d31c7c54994fe7",
+        "name": "화재 트리거 버튼",
+        "func": "msg.topic = \"decision/control\";\n\nmsg.payload = {\n    command: \"fire_test\",\n    source: \"nodered_ui\",\n    duration_ms: 10000,\n    reason: \"manual_fire_trigger\",\n    ts_ms: Date.now()\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1040,
+        "y": 40,
+        "wires": [
+            [
+                "727fb3b3e5343377"
+            ]
+        ]
+    },
+    {
+        "id": "727fb3b3e5343377",
+        "type": "mqtt out",
+        "z": "97d31c7c54994fe7",
+        "name": "화재 트리거 버튼",
+        "topic": "",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "e157ca37f50d3f3b",
+        "x": 1240,
+        "y": 40,
+        "wires": []
+    },
+    {
+        "id": "bd3b77c4188c782e",
         "type": "global-config",
         "env": [],
         "modules": {
