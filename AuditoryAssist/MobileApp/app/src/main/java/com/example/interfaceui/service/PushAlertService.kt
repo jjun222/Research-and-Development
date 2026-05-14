@@ -1,4 +1,3 @@
-// PushAlertService.kt
 package com.example.interfaceui.service
 
 import android.app.NotificationChannel
@@ -43,33 +42,36 @@ class PushAlertService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
+
         Log.d(TAG, "onNewToken: $token")
-        publish(applicationContext, token)
+
+        PushTokenRegistrar.savePendingToken(applicationContext, token)
+        PushTokenRegistrar.flushPendingToken(applicationContext)
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
         super.onMessageReceived(message)
-    
+
         Log.d(TAG, "message data=${message.data}, notification=${message.notification}")
-    
+
         val data = message.data
-    
+
         val title = data["title"]
             ?: message.notification?.title
             ?: "알림"
-    
+
         val body = data["body"]
             ?: data["message"]
             ?: message.notification?.body
             ?: "내용 없음"
-    
+
         val receivedAt = data["timestamp_ms"]?.toLongOrNull()
             ?: System.currentTimeMillis()
-    
+
         ioScope.launch {
             runCatching {
                 val dao = AppDatabase.getDatabase(applicationContext).notificationDao()
-    
+
                 dao.insert(
                     NotificationEntity(
                         title = title,
@@ -77,13 +79,13 @@ class PushAlertService : FirebaseMessagingService() {
                         createdAt = receivedAt
                     )
                 )
-    
+
                 Log.d(TAG, "notification saved to DB: $title / $body / $receivedAt")
             }.onFailure { e ->
                 Log.e(TAG, "save notification to DB failed", e)
             }
         }
-    
+
         showLocalNotification(title, body)
     }
 
@@ -124,7 +126,7 @@ class PushAlertService : FirebaseMessagingService() {
         val pendingIntent = PendingIntent.getActivity(this, 0, intent, piFlags)
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert) // 필요 시 앱 아이콘으로 교체 가능
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
@@ -142,20 +144,20 @@ class PushAlertService : FirebaseMessagingService() {
 
     companion object {
         private const val TAG = "PushAlertService"
-        private const val TOPIC_REGISTER = "interfaceui/push/register"
         private const val CHANNEL_ID = "alerts"
 
-        /** 앱 시작 시 한 번 호출해서 토큰을 MQTT로 등록 */
         fun ensureTokenRegistered(appContext: Context) {
             FirebaseMessaging.getInstance().token
                 .addOnSuccessListener { token ->
                     Log.d(TAG, "fetched token: $token")
-                    publish(appContext, token)
+                    PushTokenRegistrar.savePendingToken(appContext.applicationContext, token)
+                    PushTokenRegistrar.flushPendingToken(appContext.applicationContext)
                 }
                 .addOnFailureListener { e ->
                     Log.e(TAG, "get token failed", e)
                 }
         }
+    }
 
         /** MQTT로 토큰 전송 */
         private fun publish(appContext: Context, token: String) {
