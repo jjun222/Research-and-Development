@@ -12,7 +12,6 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.example.interfaceui.MainActivity
-import com.example.interfaceui.MqttHelper
 import com.example.interfaceui.R
 import com.example.interfaceui.data.AppDatabase
 import com.example.interfaceui.data.NotificationEntity
@@ -156,25 +155,6 @@ class PushAlertService : FirebaseMessagingService() {
                 .addOnFailureListener { e ->
                     Log.e(TAG, "get token failed", e)
                 }
-        }
-    }
-
-        /** MQTT로 토큰 전송 */
-        private fun publish(appContext: Context, token: String) {
-            val payload = """{"token":"$token"}"""
-            MqttHelper.connect(
-                context = appContext,
-                onConnected = { ok ->
-                    if (ok) {
-                        MqttHelper.instance?.publish(
-                            TOPIC_REGISTER, payload, qos = 1, retain = false
-                        )
-                        Log.d(TAG, "token published via MQTT")
-                    } else {
-                        Log.e(TAG, "MQTT connect failed for token publish")
-                    }
-                }
-            )
         }
     }
 }
