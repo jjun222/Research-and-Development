@@ -5,7 +5,6 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.View
-import android.view.ViewGroup
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
@@ -13,6 +12,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import com.example.interfaceui.broker.BrokerBootstrap
+import com.example.interfaceui.service.LocalMqttAlertService
 import com.example.interfaceui.service.PushAlertService
 import com.example.interfaceui.ui1.CheckActivity
 import com.example.interfaceui.ui1.DeviceSelectActivity
@@ -26,10 +26,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
-        val root = findViewById<ViewGroup>(R.id.root)
+        val root = findViewById<View>(R.id.root)
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
             val sysBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             v.updatePadding(top = sysBars.top)
@@ -70,14 +71,10 @@ class MainActivity : AppCompatActivity() {
 
         requestPostNotificationIfNeeded()
 
-        BrokerBootstrap.prepare(applicationContext) {
-            PushAlertService.ensureTokenRegistered(applicationContext)
-        }
-
         BrokerBootstrap.prepare(applicationContext) { result ->
             if (result.connected) {
                 PushAlertService.ensureTokenRegistered(applicationContext)
-                PushTokenRegistrar.flushPendingToken(applicationContext)
+                LocalMqttAlertService.start(applicationContext)
             }
         }
     }
@@ -85,8 +82,12 @@ class MainActivity : AppCompatActivity() {
     private fun requestPostNotificationIfNeeded() {
         if (Build.VERSION.SDK_INT >= 33) {
             val enabled = NotificationManagerCompat.from(this).areNotificationsEnabled()
+
             if (!enabled) {
-                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+                requestPermissions(
+                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                    1001
+                )
             }
         }
     }
