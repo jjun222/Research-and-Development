@@ -8,7 +8,7 @@ import java.util.concurrent.CopyOnWriteArraySet
 
 class MqttHelper private constructor(
     private val app: Context,
-    private val serverUri: String = DEFAULT_URI,
+    private val serverUri: String,
     clientId: String = "android-" + System.currentTimeMillis()
 ) {
     private val client = MqttAndroidClient(app, serverUri, clientId)
@@ -165,7 +165,6 @@ class MqttHelper private constructor(
 
     companion object {
         private const val TAG = "MqttHelper"
-        private const val DEFAULT_URI = "tcp://192.168.0.33:1883"
 
         @Volatile
         private var _instance: MqttHelper? = null
@@ -175,9 +174,13 @@ class MqttHelper private constructor(
 
         fun init(
             context: Context,
-            serverUri: String = DEFAULT_URI,
+            serverUri: String,
             clientId: String = "android-" + System.currentTimeMillis()
         ): MqttHelper {
+            require(serverUri.startsWith("tcp://")) {
+                "serverUri는 tcp:// 형식이어야 합니다. serverUri=$serverUri"
+            }
+
             if (_instance == null) {
                 synchronized(this) {
                     if (_instance == null) {
@@ -185,6 +188,7 @@ class MqttHelper private constructor(
                     }
                 }
             }
+
             return _instance!!
         }
 
@@ -193,6 +197,10 @@ class MqttHelper private constructor(
             serverUri: String,
             clientId: String = "android-" + System.currentTimeMillis()
         ): MqttHelper {
+            require(serverUri.startsWith("tcp://")) {
+                "serverUri는 tcp:// 형식이어야 합니다. serverUri=$serverUri"
+            }
+
             synchronized(this) {
                 val old = _instance
 
@@ -219,24 +227,33 @@ class MqttHelper private constructor(
             }
         }
 
-        fun connect(
+        /**
+         * 리스너를 자동으로 추가하지 않는 연결 함수.
+         * 메시지 수신이 필요한 화면은 직접 addMessageListener/removeMessageListener를 사용해야 함.
+         */
+        fun connectOnly(
             context: Context,
             serverUri: String? = null,
             clientId: String = "android-" + System.currentTimeMillis(),
             onConnected: (Boolean) -> Unit = {},
-            onMessage: (String, String) -> Unit = { _, _ -> },
             onError: ((Throwable) -> Unit)? = null
         ) {
-            val targetUri = serverUri ?: instance?.currentServerUri ?: DEFAULT_URI
+            val targetUri = serverUri ?: _instance?.currentServerUri
 
-            val h = when {
+            if (targetUri.isNullOrBlank()) {
+                val e = IllegalStateException("MQTT Broker URI가 없습니다. BrokerBootstrap.prepare() 또는 Wi-Fi 설정을 먼저 실행하세요.")
+                onError?.invoke(e)
+                onConnected(false)
+                return
+            }
+
+            val helper = when {
                 _instance == null -> init(context, targetUri, clientId)
                 _instance?.currentServerUri != targetUri -> switchServer(context, targetUri, clientId)
                 else -> _instance!!
             }
 
-            h.addMessageListener(onMessage)
-            h.connect(
+            helper.connect(
                 onConnected = { onConnected(true) },
                 onError = { e ->
                     onError?.invoke(e)
