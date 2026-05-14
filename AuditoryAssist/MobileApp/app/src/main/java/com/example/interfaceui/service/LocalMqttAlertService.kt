@@ -23,6 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import kotlinx.coroutines.cancel
 
 class LocalMqttAlertService : Service() {
 
@@ -43,6 +44,7 @@ class LocalMqttAlertService : Service() {
 
     override fun onDestroy() {
         MqttHelper.instance?.removeMessageListener(mqttListener)
+        serviceScope.cancel()
         super.onDestroy()
     }
 
