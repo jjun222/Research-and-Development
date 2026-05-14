@@ -1,4 +1,3 @@
-
 import gc
 import os
 import socket
@@ -9,22 +8,29 @@ import network
 import ubinascii
 import ujson as json
 from machine import Pin
-from umqtt.simple import MQTTClient
+from simple import MQTTClient
 
 # =========================================================
 # Hardware
 # =========================================================
-ENA = Pin(15, Pin.OUT, value=0)
-IN1 = Pin(16, Pin.OUT, value=0)
-IN2 = Pin(17, Pin.OUT, value=0)
+# New relay circuit:
+#   Pico GP16 HIGH -> C1815 ON -> Relay IN pulled LOW -> Relay ON -> Beacon ON
+#   Pico GP16 LOW  -> C1815 OFF -> Relay OFF           -> Beacon OFF
+#
+# IMPORTANT hardware note:
+#   Put a base resistor, typically 1 kΩ ~ 4.7 kΩ, between GP16 and C1815 Base.
+#   Pico GND, relay GND, UBEC OUT-2 GND, and C1815 Emitter must share common GND.
+# =========================================================
+RELAY_CTRL_PIN = 16
+RELAY_ACTIVE_HIGH = True
+
+relay_ctrl = Pin(RELAY_CTRL_PIN, Pin.OUT, value=0)
 
 def beacon_on():
-    IN1.value(0)
-    IN2.value(0)
-    ENA.value(1)
+    relay_ctrl.value(1 if RELAY_ACTIVE_HIGH else 0)
 
 def beacon_off():
-    ENA.value(0)
+    relay_ctrl.value(0 if RELAY_ACTIVE_HIGH else 1)
 
 try:
     ONBOARD_LED = Pin("LED", Pin.OUT)
@@ -52,11 +58,11 @@ TOPIC_LOG = f"interfaceui/logs/subscriber/{DEVICE_ID}"
 # =========================================================
 # Runtime / safety configuration
 # =========================================================
-WIFI_RETRY_MAX = 30
+WIFI_RETRY_MAX = 300
 WIFI_RETRY_WAIT_MS = 500
 MQTT_RECONNECT_MAX = 10
 MAX_RECOVERY_FAILS = 8
-COLD_BOOT_SETTLE_MS = 12_000
+COLD_BOOT_SETTLE_MS = 3_000
 SOFT_BOOT_SETTLE_MS = 3_000
 WIFI_POST_RESET_WAIT_MS = 1_500
 POST_WIFI_CONNECT_SETTLE_MS = 1_000
@@ -410,6 +416,8 @@ def publish_status(online=True, reason="heartbeat"):
         "reason": reason,
         "ts": now_ts(),
         "reset_cause": reset_cause_name(),
+        "relay_pin": RELAY_CTRL_PIN,
+        "relay_active_high": RELAY_ACTIVE_HIGH,
     }
     safe_publish(TOPIC_STATUS, payload, retain=True)
 
@@ -419,7 +427,14 @@ def publish_hello():
         wlan = network.WLAN(network.STA_IF)
         wlan.active(True)
     ip = wlan.ifconfig()[0] if wlan.isconnected() else ""
-    payload = {"id": DEVICE_ID, "ip": ip, "name": DEVICE_ID, "type": "subscriber", "ts": now_ts()}
+    payload = {
+        "id": DEVICE_ID,
+        "ip": ip,
+        "name": DEVICE_ID,
+        "type": "subscriber",
+        "ts": now_ts(),
+        "relay_pin": RELAY_CTRL_PIN,
+    }
     safe_publish(TOPIC_HELLO, payload, retain=True)
     log("info", "hello published", ip=ip)
 
@@ -609,6 +624,11 @@ def main():
     beacon_off()
     set_led(False)
     blink_n(2)
+    print("====================================")
+    print("🚀 BEACON BOOT START")
+    print("🧾 reset cause =", reset_cause_name())
+    print("🔌 relay control pin = GP%d" % RELAY_CTRL_PIN)
+    print("====================================")
     pre_boot_stabilize()
     startup_wifi_or_portal()
 
@@ -679,3 +699,4 @@ def main():
             time.sleep(2)
 
 main()
+
