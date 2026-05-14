@@ -90,7 +90,7 @@ class LocalMqttAlertService : Service() {
     }
 
     private fun handleAlertMessage(topic: String, payload: String) {
-        val parsed = parseAlert(topic, payload)
+        val parsed = parseAlertOrNull(topic, payload) ?: return
 
         serviceScope.launch {
             AppDatabase.getDatabase(applicationContext)
@@ -111,63 +111,249 @@ class LocalMqttAlertService : Service() {
         }
     }
 
-    private fun parseAlert(topic: String, payload: String): ParsedAlert {
-        return runCatching {
+    private fun parseAlertOrNull(topic: String, payload: String): ParsedAlert? {
+        val fallbackType = typeFromTopic(topic)
+
+        return try {
             val json = JSONObject(payload)
 
-            val type = json.optString("type").ifBlank {
-                when (topic) {
-                    "shz/sensor" -> "flame"
-                    "mq7/sensor" -> "co"
-                    "gas/sensor" -> "gas"
-                    "AI_fire_alert" -> "fire"
-                    "water_level/sensor" -> "water"
-                    "doorbell/sensor" -> "doorbell"
-                    else -> "system"
-                }
+            // 1순위: 정상 메시지는 무조건 알림 제외
+            if (isNormalPayload(json)) {
+                return null
+            }
+
+            val type = json.optString("type").ifBlank { fallbackType }
+
+            // 2순위: alerts/# 토픽은 판단 서버가 이미 알림용으로 정리해서 보낸 것으로 간주
+            // 단, 위에서 정상 메시지는 이미 걸렀음
+            val isServerAlertTopic = topic.startsWith("alerts/")
+
+            // 3순위: 센서 raw topic은 실제 감지/위험 조건일 때만 알림 허용
+            if (!isServerAlertTopic && !isDetectedPayload(topic, json)) {
+                return null
             }
 
             val title = json.optString("title").ifBlank {
-                when (type) {
-                    "fire" -> "화재 감지"
-                    "flame" -> "불꽃 감지"
-                    "gas" -> "가스 감지"
-                    "co" -> "일산화탄소 감지"
-                    "water" -> "수위 감지"
-                    "doorbell" -> "초인종 감지"
-                    else -> "시스템 알림"
-                }
+                titleForType(type)
             }
 
             val body = json.optString("body").ifBlank {
                 json.optString("message").ifBlank {
-                    when (type) {
-                        "fire" -> "화재 위험 신호가 감지되었습니다."
-                        "flame" -> "불꽃 센서가 감지되었습니다."
-                        "gas" -> "가스 센서가 위험 상태를 감지했습니다."
-                        "co" -> "일산화탄소 센서가 위험 상태를 감지했습니다."
-                        "water" -> "수위 센서가 감지되었습니다."
-                        "doorbell" -> "초인종 버튼이 감지되었습니다."
-                        else -> payload
-                    }
+                    bodyForType(type)
                 }
+            }
+
+            val timestampMs = when {
+                json.has("timestamp_ms") -> json.optLong("timestamp_ms", System.currentTimeMillis())
+                json.has("ts_ms") -> json.optLong("ts_ms", System.currentTimeMillis())
+                else -> System.currentTimeMillis()
             }
 
             ParsedAlert(
                 type = type,
-                level = json.optString("level", if (type == "fire") "critical" else "warning"),
+                level = json.optString("level", defaultLevelForType(type)),
                 title = title,
                 body = body,
-                timestampMs = json.optLong("timestamp_ms", System.currentTimeMillis())
+                timestampMs = timestampMs
             )
-        }.getOrElse {
-            ParsedAlert(
-                type = "system",
-                level = "info",
-                title = "MQTT 알림",
-                body = payload,
-                timestampMs = System.currentTimeMillis()
-            )
+        } catch (_: Exception) {
+            parseTextAlertOrNull(topic, payload)
+        }
+    }
+
+    private fun typeFromTopic(topic: String): String {
+        return when (topic) {
+            "shz/sensor" -> "flame"
+            "mq7/sensor" -> "co"
+            "gas/sensor" -> "gas"
+            "AI_fire_alert" -> "fire"
+            "water_level/sensor" -> "water"
+            "doorbell/sensor" -> "doorbell"
+            else -> {
+                when {
+                    topic.startsWith("alerts/fire") -> "fire"
+                    topic.startsWith("alerts/gas") -> "gas"
+                    topic.startsWith("alerts/co") -> "co"
+                    topic.startsWith("alerts/water") -> "water"
+                    topic.startsWith("alerts/doorbell") -> "doorbell"
+                    else -> "system"
+                }
+            }
+        }
+    }
+
+    private fun isNormalPayload(json: JSONObject): Boolean {
+        val status = json.optString("status", "").trim().lowercase()
+        val event = json.optString("event", "").trim().lowercase()
+        val state = json.optString("state", "").trim().lowercase()
+
+        val normalWords = listOf(
+            "정상",
+            "normal",
+            "clear",
+            "safe",
+            "off",
+            "false",
+            "ok"
+        )
+
+        return normalWords.any { word ->
+            status.contains(word) || event.contains(word) || state.contains(word)
+        }
+    }
+
+    private fun isDetectedPayload(topic: String, json: JSONObject): Boolean {
+        val status = json.optString("status", "").trim().lowercase()
+        val event = json.optString("event", "").trim().lowercase()
+        val type = typeFromTopic(topic)
+
+        val dangerWords = listOf(
+            "위험",
+            "감지",
+            "화재",
+            "detected",
+            "detect",
+            "alert",
+            "warning",
+            "danger",
+            "fire",
+            "gas",
+            "co",
+            "flame",
+            "smoke",
+            "pressed",
+            "ring",
+            "bell",
+            "water",
+            "leak",
+            "flood",
+            "overflow",
+            "wet"
+        )
+
+        if (dangerWords.any { word -> status.contains(word) || event.contains(word) }) {
+            return true
+        }
+
+        if (json.optBoolean("detected", false)) return true
+        if (json.optBoolean("alert", false)) return true
+        if (json.optBoolean("pressed", false)) return true
+        if (json.optBoolean("ring", false)) return true
+        if (json.optBoolean("bell", false)) return true
+        if (json.optBoolean("wet", false)) return true
+        if (json.optBoolean("overflow", false)) return true
+
+        val intFields = listOf(
+            "detected",
+            "alert",
+            "pressed",
+            "ring",
+            "bell",
+            "wet",
+            "overflow"
+        )
+
+        if (intFields.any { field -> json.optInt(field, 0) == 1 }) {
+            return true
+        }
+
+        // SHZ, AI, 수위, 초인종은 감지 시에만 publish하는 구조일 수 있으므로 event 기반 허용
+        if (type == "flame" && event.contains("shz_detected")) return true
+        if (type == "fire" && event.contains("fire_detected")) return true
+        if (type == "water" && event.contains("water")) return true
+        if (type == "doorbell" && event.contains("doorbell")) return true
+
+        return false
+    }
+
+    private fun parseTextAlertOrNull(topic: String, payload: String): ParsedAlert? {
+        val lower = payload.trim().lowercase()
+
+        val normalWords = listOf(
+            "0",
+            "false",
+            "off",
+            "normal",
+            "clear",
+            "safe",
+            "정상"
+        )
+
+        if (normalWords.any { lower == it || lower.contains(it) }) {
+            return null
+        }
+
+        val dangerWords = listOf(
+            "1",
+            "true",
+            "on",
+            "detected",
+            "alert",
+            "warning",
+            "danger",
+            "fire",
+            "flame",
+            "gas",
+            "co",
+            "smoke",
+            "ring",
+            "pressed",
+            "bell",
+            "water",
+            "leak",
+            "flood",
+            "overflow",
+            "wet",
+            "감지",
+            "위험",
+            "화재"
+        )
+
+        if (!dangerWords.any { lower == it || lower.contains(it) }) {
+            return null
+        }
+
+        val type = typeFromTopic(topic)
+
+        return ParsedAlert(
+            type = type,
+            level = defaultLevelForType(type),
+            title = titleForType(type),
+            body = bodyForType(type),
+            timestampMs = System.currentTimeMillis()
+        )
+    }
+
+    private fun titleForType(type: String): String {
+        return when (type) {
+            "fire" -> "화재 감지"
+            "flame" -> "불꽃 감지"
+            "gas" -> "가스 감지"
+            "co" -> "일산화탄소 감지"
+            "water" -> "수위 감지"
+            "doorbell" -> "초인종 감지"
+            else -> "시스템 알림"
+        }
+    }
+
+    private fun bodyForType(type: String): String {
+        return when (type) {
+            "fire" -> "화재 위험 신호가 감지되었습니다."
+            "flame" -> "불꽃 센서가 감지되었습니다."
+            "gas" -> "가스 센서가 위험 상태를 감지했습니다."
+            "co" -> "일산화탄소 센서가 위험 상태를 감지했습니다."
+            "water" -> "수위 센서가 감지되었습니다."
+            "doorbell" -> "초인종 버튼이 감지되었습니다."
+            else -> "시스템 알림이 수신되었습니다."
+        }
+    }
+
+    private fun defaultLevelForType(type: String): String {
+        return when (type) {
+            "fire" -> "critical"
+            "flame", "gas", "co" -> "warning"
+            "water", "doorbell" -> "info"
+            else -> "info"
         }
     }
 
