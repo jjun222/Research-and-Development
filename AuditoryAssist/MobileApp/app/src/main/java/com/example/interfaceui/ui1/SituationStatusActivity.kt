@@ -88,10 +88,6 @@ class SituationStatusActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_situation_status)
 
-        findViewById<androidx.appcompat.widget.Toolbar?>(R.id.toolbar)?.also {
-            it.setNavigationOnClickListener { finish() }
-        }
-
         recycler = findViewById(R.id.recycler)
         recycler.layoutManager = LinearLayoutManager(this)
         recycler.adapter = adapterRv
