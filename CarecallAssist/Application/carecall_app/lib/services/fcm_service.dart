@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/alert_event.dart';
 import '../store/alert_store.dart';
+import 'care_api_service.dart';
 import 'navigation_service.dart';
 
 class FcmService {
@@ -31,11 +32,12 @@ class FcmService {
     currentToken = await _messaging.getToken();
     debugPrint('FCM Token: $currentToken');
 
-    _messaging.onTokenRefresh.listen((newToken) {
+    await registerCurrentToken();
+
+    _messaging.onTokenRefresh.listen((newToken) async {
       currentToken = newToken;
       debugPrint('FCM Token 갱신: $newToken');
-
-      // TODO: 나중에 Raspberry Pi 서버로 새 토큰 전송
+      await registerCurrentToken();
     });
 
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
@@ -44,20 +46,31 @@ class FcmService {
       debugPrint('내용: ${message.notification?.body}');
       debugPrint('데이터: ${message.data}');
 
-      _handleIncomingMessage(message, openDetailPage: false);
+      _handleIncomingMessage(
+        message,
+        openDetailPage: false,
+      );
     });
 
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
       debugPrint('알림 클릭으로 앱 열림');
       debugPrint('데이터: ${message.data}');
 
-      _handleIncomingMessage(message, openDetailPage: true);
+      _handleIncomingMessage(
+        message,
+        openDetailPage: true,
+      );
     });
 
     final initialMessage = await _messaging.getInitialMessage();
+
     if (initialMessage != null) {
       debugPrint('종료 상태에서 알림 클릭으로 앱 실행');
-      _handleIncomingMessage(initialMessage, openDetailPage: true);
+
+      _handleIncomingMessage(
+        initialMessage,
+        openDetailPage: true,
+      );
     }
   }
 
@@ -67,12 +80,27 @@ class FcmService {
     return currentToken;
   }
 
+  Future<bool> registerCurrentToken() async {
+    final token = currentToken ?? await refreshToken();
+
+    if (token == null || token.isEmpty) {
+      debugPrint('등록할 FCM 토큰이 없습니다.');
+      return false;
+    }
+
+    final platform = defaultTargetPlatform.name;
+
+    return CareApiService.instance.registerFcmToken(
+      token: token,
+      platform: platform,
+    );
+  }
+
   void _handleIncomingMessage(
     RemoteMessage message, {
     required bool openDetailPage,
   }) {
     final alert = AlertEvent.fromRemoteMessage(message);
-
     AlertStore.instance.addAlert(alert);
 
     if (openDetailPage) {
