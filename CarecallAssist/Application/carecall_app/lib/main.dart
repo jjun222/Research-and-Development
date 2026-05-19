@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'app/app.dart';
 import 'firebase_options.dart';
 import 'services/fcm_service.dart';
+import 'store/alert_store.dart';
 
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -27,5 +28,6 @@ Future<void> main() async {
 
   runApp(const CareCallApp());
 
+  await AlertStore.instance.initialize();
   await FcmService.instance.initialize();
 }
