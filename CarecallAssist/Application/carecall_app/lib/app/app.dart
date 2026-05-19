@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../features/alerts/presentation/alert_detail_page.dart';
 import '../features/alerts/presentation/alert_history_page.dart';
+import '../features/chat/presentation/chat_page.dart';
 import '../features/home/presentation/home_page.dart';
+import '../features/monitoring/presentation/camera_monitoring_page.dart';
 import '../features/settings/presentation/settings_page.dart';
 import '../services/navigation_service.dart';
 
@@ -23,13 +25,23 @@ class CareCallApp extends StatelessWidget {
       routes: {
         '/history': (_) => const AlertHistoryPage(),
         '/settings': (_) => const SettingsPage(),
+        '/chat': (_) => const ChatPage(),
+        '/monitoring': (_) => const CameraMonitoringPage(),
       },
       onGenerateRoute: (settings) {
         if (settings.name == '/alert-detail') {
           final eventId = settings.arguments as String?;
-
           return MaterialPageRoute(
             builder: (_) => AlertDetailPage(eventId: eventId),
+          );
+        }
+
+        if (settings.name == '/monitoring-with-url') {
+          final streamUrl = settings.arguments as String?;
+          return MaterialPageRoute(
+            builder: (_) => CameraMonitoringPage(
+              initialStreamUrl: streamUrl,
+            ),
           );
         }
 
