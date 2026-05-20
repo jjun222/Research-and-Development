@@ -7,7 +7,6 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
-import android.view.View
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
@@ -16,6 +15,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import com.example.interfaceui.broker.BrokerBootstrap
+import com.example.interfaceui.net.CameraRegistryStore
 import com.example.interfaceui.service.LocalMqttAlertService
 import com.example.interfaceui.service.PushAlertService
 import com.example.interfaceui.ui1.CheckActivity
@@ -30,7 +30,6 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
-
     private lateinit var tvMqttStatus: TextView
     private lateinit var tvBrokerUri: TextView
     private lateinit var tvAlertMode: TextView
@@ -39,9 +38,11 @@ class MainActivity : AppCompatActivity() {
     private var isScreenActive = false
     private var lastConnectedUri: String? = null
 
-    private val mainMqttListener: (String, String) -> Unit = listener@{ topic, _ ->
-        if (!isScreenActive) return@listener
+    private val mainMqttListener: (String, String) -> Unit = listener@{ topic, payload ->
+        // AI 카메라가 MQTT registry/status로 video_url을 publish하면 앱 foreground에서도 저장한다.
+        CameraRegistryStore.handleMqttMessage(applicationContext, topic, payload)
 
+        if (!isScreenActive) return@listener
         if (!shouldUpdateLastReceived(topic)) return@listener
 
         runOnUiThread {
@@ -53,11 +54,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
-        val root = findViewById<View>(R.id.root)
+        val root = findViewById<android.view.View>(R.id.root)
         ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
             val sysBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             v.updatePadding(top = sysBars.top)
@@ -95,35 +95,35 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun bindMenuButtons() {
-        findViewById<View>(R.id.btnMoveSituationStatus).setOnClickListener {
+        findViewById<android.view.View>(R.id.btnMoveSituationStatus).setOnClickListener {
             startActivity(Intent(this, SituationStatusActivity::class.java))
         }
 
-        findViewById<View>(R.id.btnMoveCheck).setOnClickListener {
+        findViewById<android.view.View>(R.id.btnMoveCheck).setOnClickListener {
             startActivity(Intent(this, CheckActivity::class.java))
         }
 
-        findViewById<View>(R.id.btnMoveLog).setOnClickListener {
+        findViewById<android.view.View>(R.id.btnMoveLog).setOnClickListener {
             startActivity(Intent(this, LogActivity::class.java))
         }
 
-        findViewById<View>(R.id.btnMoveSetting).setOnClickListener {
+        findViewById<android.view.View>(R.id.btnMoveSetting).setOnClickListener {
             startActivity(Intent(this, SettingActivity::class.java))
         }
 
-        findViewById<View>(R.id.btnMoveCamera).setOnClickListener {
+        findViewById<android.view.View>(R.id.btnMoveCamera).setOnClickListener {
             startActivity(Intent(this, LiveVideoActivity::class.java))
         }
 
-        findViewById<View>(R.id.btnMoveDevice).setOnClickListener {
+        findViewById<android.view.View>(R.id.btnMoveDevice).setOnClickListener {
             startActivity(Intent(this, DeviceSelectActivity::class.java))
         }
 
-        findViewById<View>(R.id.btnMoveNotification).setOnClickListener {
+        findViewById<android.view.View>(R.id.btnMoveNotification).setOnClickListener {
             startActivity(Intent(this, NotificationActivity::class.java))
         }
 
-        findViewById<View>(R.id.btnMoveWifiSettings).setOnClickListener {
+        findViewById<android.view.View>(R.id.btnMoveWifiSettings).setOnClickListener {
             startActivity(Intent(this, WifiSettingsActivity::class.java))
         }
     }
@@ -161,13 +161,13 @@ class MainActivity : AppCompatActivity() {
                         helper.removeMessageListener(mainMqttListener)
                         helper.addMessageListener(mainMqttListener)
                         subscribeHomeTopics(helper)
+                        requestRegistryHello(helper)
                     }
 
                     PushAlertService.ensureTokenRegistered(applicationContext)
                     LocalMqttAlertService.start(applicationContext)
                 } else {
                     lastConnectedUri = null
-
                     tvMqttStatus.text = "MQTT 상태: 연결 실패"
                     tvBrokerUri.text = "브로커: 없음"
                     tvAlertMode.text = if (isInternetAvailable()) {
@@ -185,11 +185,9 @@ class MainActivity : AppCompatActivity() {
 
         if (!uri.isNullOrBlank()) {
             tvBrokerUri.text = "브로커: $uri"
-
             if (!tvMqttStatus.text.contains("연결됨")) {
                 tvMqttStatus.text = "MQTT 상태: 연결 정보 있음"
             }
-
             tvAlertMode.text = buildAlertModeText()
         }
     }
@@ -198,6 +196,8 @@ class MainActivity : AppCompatActivity() {
         listOf(
             "alerts/#",
             "interfaceui/status/server",
+            "interfaceui/registry/hello/#",
+            "interfaceui/status/publisher/AI_D_fire",
             "shz/sensor",
             "mq7/sensor",
             "gas/sensor",
@@ -209,15 +209,32 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun requestRegistryHello(helper: MqttHelper) {
+        val payload = org.json.JSONObject()
+            .put("request", "hello")
+            .put("source", "android_main")
+            .put("ts_ms", System.currentTimeMillis())
+            .toString()
+
+        helper.publish(
+            topic = "interfaceui/registry/request",
+            payload = payload,
+            qos = 1,
+            retain = false
+        )
+    }
+
     private fun shouldUpdateLastReceived(topic: String): Boolean {
         return topic.startsWith("alerts/") ||
-                topic == "interfaceui/status/server" ||
-                topic == "shz/sensor" ||
-                topic == "mq7/sensor" ||
-                topic == "gas/sensor" ||
-                topic == "AI_fire_alert" ||
-                topic == "water_level/sensor" ||
-                topic == "doorbell/sensor"
+            topic.startsWith("interfaceui/registry/hello/") ||
+            topic == "interfaceui/status/server" ||
+            topic == "interfaceui/status/publisher/AI_D_fire" ||
+            topic == "shz/sensor" ||
+            topic == "mq7/sensor" ||
+            topic == "gas/sensor" ||
+            topic == "AI_fire_alert" ||
+            topic == "water_level/sensor" ||
+            topic == "doorbell/sensor"
     }
 
     private fun buildAlertModeText(): String {
@@ -231,12 +248,8 @@ class MainActivity : AppCompatActivity() {
     private fun requestPostNotificationIfNeeded() {
         if (Build.VERSION.SDK_INT >= 33) {
             val enabled = NotificationManagerCompat.from(this).areNotificationsEnabled()
-
             if (!enabled) {
-                requestPermissions(
-                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-                    1001
-                )
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
             }
         }
     }
@@ -247,7 +260,7 @@ class MainActivity : AppCompatActivity() {
         val capabilities = cm.getNetworkCapabilities(network) ?: return false
 
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
     private fun nowText(): String {
