@@ -18,18 +18,29 @@ import com.example.interfaceui.R
 import com.example.interfaceui.broker.BrokerBootstrap
 import com.example.interfaceui.data.AppDatabase
 import com.example.interfaceui.data.NotificationEntity
+import com.example.interfaceui.net.CameraRegistryStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
-import kotlinx.coroutines.cancel
 
 class LocalMqttAlertService : Service() {
-
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private val mqttListener: (String, String) -> Unit = { topic, payload ->
+    @Volatile
+    private var destroyed = false
+
+    private var lastFailureNotificationAt = 0L
+
+    private val mqttListener: (String, String) -> Unit = listener@{ topic, payload ->
+        // AI 카메라가 registry/status로 video_url을 보내면 백그라운드에서도 저장한다.
+        if (CameraRegistryStore.handleMqttMessage(applicationContext, topic, payload)) {
+            return@listener
+        }
+
         if (isAlertTopic(topic)) {
             handleAlertMessage(topic, payload)
         }
@@ -37,12 +48,14 @@ class LocalMqttAlertService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        destroyed = false
         createChannels()
         startForeground(FOREGROUND_ID, buildServiceNotification())
         startMqtt()
     }
 
     override fun onDestroy() {
+        destroyed = true
         MqttHelper.instance?.removeMessageListener(mqttListener)
         serviceScope.cancel()
         super.onDestroy()
@@ -51,23 +64,33 @@ class LocalMqttAlertService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun startMqtt() {
+        attemptMqttConnect()
+    }
+
+    private fun attemptMqttConnect() {
+        if (destroyed) return
+
         BrokerBootstrap.prepare(applicationContext) { result ->
+            if (destroyed) return@prepare
+
             if (!result.connected) {
-                showSystemNotification(
-                    title = "MQTT 연결 실패",
-                    body = result.errorMessage ?: "로컬 알림 서비스를 시작하지 못했습니다."
-                )
+                maybeShowConnectionFailure(result.errorMessage)
+                scheduleReconnect()
                 return@prepare
             }
 
-            val helper = MqttHelper.instance ?: return@prepare
+            val helper = MqttHelper.instance ?: run {
+                scheduleReconnect()
+                return@prepare
+            }
 
+            helper.removeMessageListener(mqttListener)
             helper.addMessageListener(mqttListener)
 
             // 판단 서버에서 앱 알림용으로 보내는 권장 토픽
             helper.subscribe("alerts/#", qos = 1)
 
-            // 기존 센서 토픽도 임시 호환용으로 구독 가능
+            // 기존 센서 raw topic 호환용
             helper.subscribe("shz/sensor", qos = 1)
             helper.subscribe("mq7/sensor", qos = 1)
             helper.subscribe("gas/sensor", qos = 1)
@@ -75,18 +98,63 @@ class LocalMqttAlertService : Service() {
             helper.subscribe("water_level/sensor", qos = 1)
             helper.subscribe("doorbell/sensor", qos = 1)
 
+            // AI 카메라 video_url 자동 저장용
+            helper.subscribe("interfaceui/registry/hello/#", qos = 1)
+            helper.subscribe("interfaceui/status/publisher/AI_D_fire", qos = 1)
+
+            // registry 재전송 요청. 판단 서버/장치가 지원하지 않아도 영향 없음.
+            requestRegistryHello(helper)
+
             PushTokenRegistrar.flushPendingToken(applicationContext)
         }
     }
 
+    private fun scheduleReconnect() {
+        if (destroyed) return
+
+        serviceScope.launch {
+            delay(RECONNECT_DELAY_MS)
+            if (!destroyed) {
+                attemptMqttConnect()
+            }
+        }
+    }
+
+    private fun maybeShowConnectionFailure(errorMessage: String?) {
+        val now = System.currentTimeMillis()
+        if (now - lastFailureNotificationAt < FAILURE_NOTIFICATION_THROTTLE_MS) return
+
+        lastFailureNotificationAt = now
+
+        showSystemNotification(
+            title = "MQTT 연결 실패",
+            body = errorMessage ?: "로컬 알림 서비스가 MQTT Broker 연결을 재시도 중입니다."
+        )
+    }
+
+    private fun requestRegistryHello(helper: MqttHelper) {
+        val payload = JSONObject()
+            .put("request", "hello")
+            .put("source", "android_local_service")
+            .put("ts_ms", System.currentTimeMillis())
+            .toString()
+
+        helper.publish(
+            topic = "interfaceui/registry/request",
+            payload = payload,
+            qos = 1,
+            retain = false
+        )
+    }
+
     private fun isAlertTopic(topic: String): Boolean {
         return topic.startsWith("alerts/") ||
-                topic == "shz/sensor" ||
-                topic == "mq7/sensor" ||
-                topic == "gas/sensor" ||
-                topic == "AI_fire_alert" ||
-                topic == "water_level/sensor" ||
-                topic == "doorbell/sensor"
+            topic == "shz/sensor" ||
+            topic == "mq7/sensor" ||
+            topic == "gas/sensor" ||
+            topic == "AI_fire_alert" ||
+            topic == "water_level/sensor" ||
+            topic == "doorbell/sensor"
     }
 
     private fun handleAlertMessage(topic: String, payload: String) {
@@ -117,30 +185,20 @@ class LocalMqttAlertService : Service() {
         return try {
             val json = JSONObject(payload)
 
-            // 1순위: 정상 메시지는 무조건 알림 제외
             if (isNormalPayload(json)) {
                 return null
             }
 
             val type = json.optString("type").ifBlank { fallbackType }
-
-            // 2순위: alerts/# 토픽은 판단 서버가 이미 알림용으로 정리해서 보낸 것으로 간주
-            // 단, 위에서 정상 메시지는 이미 걸렀음
             val isServerAlertTopic = topic.startsWith("alerts/")
 
-            // 3순위: 센서 raw topic은 실제 감지/위험 조건일 때만 알림 허용
             if (!isServerAlertTopic && !isDetectedPayload(topic, json)) {
                 return null
             }
 
-            val title = json.optString("title").ifBlank {
-                titleForType(type)
-            }
-
+            val title = json.optString("title").ifBlank { titleForType(type) }
             val body = json.optString("body").ifBlank {
-                json.optString("message").ifBlank {
-                    bodyForType(type)
-                }
+                json.optString("message").ifBlank { bodyForType(type) }
             }
 
             val timestampMs = when {
@@ -169,15 +227,13 @@ class LocalMqttAlertService : Service() {
             "AI_fire_alert" -> "fire"
             "water_level/sensor" -> "water"
             "doorbell/sensor" -> "doorbell"
-            else -> {
-                when {
-                    topic.startsWith("alerts/fire") -> "fire"
-                    topic.startsWith("alerts/gas") -> "gas"
-                    topic.startsWith("alerts/co") -> "co"
-                    topic.startsWith("alerts/water") -> "water"
-                    topic.startsWith("alerts/doorbell") -> "doorbell"
-                    else -> "system"
-                }
+            else -> when {
+                topic.startsWith("alerts/fire") -> "fire"
+                topic.startsWith("alerts/gas") -> "gas"
+                topic.startsWith("alerts/co") -> "co"
+                topic.startsWith("alerts/water") -> "water"
+                topic.startsWith("alerts/doorbell") -> "doorbell"
+                else -> "system"
             }
         }
     }
@@ -187,15 +243,7 @@ class LocalMqttAlertService : Service() {
         val event = json.optString("event", "").trim().lowercase()
         val state = json.optString("state", "").trim().lowercase()
 
-        val normalWords = listOf(
-            "정상",
-            "normal",
-            "clear",
-            "safe",
-            "off",
-            "false",
-            "ok"
-        )
+        val normalWords = listOf("정상", "normal", "clear", "safe", "off", "false", "ok")
 
         return normalWords.any { word ->
             status.contains(word) || event.contains(word) || state.contains(word)
@@ -208,27 +256,11 @@ class LocalMqttAlertService : Service() {
         val type = typeFromTopic(topic)
 
         val dangerWords = listOf(
-            "위험",
-            "감지",
-            "화재",
-            "detected",
-            "detect",
-            "alert",
-            "warning",
-            "danger",
-            "fire",
-            "gas",
-            "co",
-            "flame",
-            "smoke",
-            "pressed",
-            "ring",
-            "bell",
-            "water",
-            "leak",
-            "flood",
-            "overflow",
-            "wet"
+            "위험", "감지", "화재",
+            "detected", "detect", "alert", "warning", "danger",
+            "fire", "gas", "co", "flame", "smoke",
+            "pressed", "ring", "bell",
+            "water", "leak", "flood", "overflow", "wet"
         )
 
         if (dangerWords.any { word -> status.contains(word) || event.contains(word) }) {
@@ -243,21 +275,11 @@ class LocalMqttAlertService : Service() {
         if (json.optBoolean("wet", false)) return true
         if (json.optBoolean("overflow", false)) return true
 
-        val intFields = listOf(
-            "detected",
-            "alert",
-            "pressed",
-            "ring",
-            "bell",
-            "wet",
-            "overflow"
-        )
-
+        val intFields = listOf("detected", "alert", "pressed", "ring", "bell", "wet", "overflow")
         if (intFields.any { field -> json.optInt(field, 0) == 1 }) {
             return true
         }
 
-        // SHZ, AI, 수위, 초인종은 감지 시에만 publish하는 구조일 수 있으므로 event 기반 허용
         if (type == "flame" && event.contains("shz_detected")) return true
         if (type == "fire" && event.contains("fire_detected")) return true
         if (type == "water" && event.contains("water")) return true
@@ -269,44 +291,15 @@ class LocalMqttAlertService : Service() {
     private fun parseTextAlertOrNull(topic: String, payload: String): ParsedAlert? {
         val lower = payload.trim().lowercase()
 
-        val normalWords = listOf(
-            "0",
-            "false",
-            "off",
-            "normal",
-            "clear",
-            "safe",
-            "정상"
-        )
-
+        val normalWords = listOf("0", "false", "off", "normal", "clear", "safe", "정상")
         if (normalWords.any { lower == it || lower.contains(it) }) {
             return null
         }
 
         val dangerWords = listOf(
-            "1",
-            "true",
-            "on",
-            "detected",
-            "alert",
-            "warning",
-            "danger",
-            "fire",
-            "flame",
-            "gas",
-            "co",
-            "smoke",
-            "ring",
-            "pressed",
-            "bell",
-            "water",
-            "leak",
-            "flood",
-            "overflow",
-            "wet",
-            "감지",
-            "위험",
-            "화재"
+            "1", "true", "on", "detected", "alert", "warning", "danger",
+            "fire", "flame", "gas", "co", "smoke", "ring", "pressed", "bell",
+            "water", "leak", "flood", "overflow", "wet", "감지", "위험", "화재"
         )
 
         if (!dangerWords.any { lower == it || lower.contains(it) }) {
@@ -314,7 +307,6 @@ class LocalMqttAlertService : Service() {
         }
 
         val type = typeFromTopic(topic)
-
         return ParsedAlert(
             type = type,
             level = defaultLevelForType(type),
@@ -379,13 +371,12 @@ class LocalMqttAlertService : Service() {
         )
     }
 
-    private fun buildServiceNotification() =
-        NotificationCompat.Builder(this, CHANNEL_SERVICE)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("AuditoryAssist 로컬 알림 실행 중")
-            .setContentText("인터넷이 없어도 MQTT 알림을 수신합니다.")
-            .setOngoing(true)
-            .build()
+    private fun buildServiceNotification() = NotificationCompat.Builder(this, CHANNEL_SERVICE)
+        .setSmallIcon(R.drawable.ic_notification)
+        .setContentTitle("AuditoryAssist 로컬 알림 실행 중")
+        .setContentText("인터넷이 없어도 MQTT 알림을 수신합니다.")
+        .setOngoing(true)
+        .build()
 
     private fun showSystemNotification(title: String, body: String) {
         if (!canPostNotification()) return
@@ -463,13 +454,13 @@ class LocalMqttAlertService : Service() {
 
     companion object {
         private const val FOREGROUND_ID = 2001
-
         private const val CHANNEL_SERVICE = "local_mqtt_service"
         private const val CHANNEL_ALERT = "local_mqtt_alerts"
+        private const val RECONNECT_DELAY_MS = 10_000L
+        private const val FAILURE_NOTIFICATION_THROTTLE_MS = 60_000L
 
         fun start(context: Context) {
             val intent = Intent(context, LocalMqttAlertService::class.java)
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
