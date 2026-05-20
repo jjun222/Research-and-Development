@@ -44,8 +44,8 @@ object BrokerDiscovery {
 
         try {
             val probe = DISCOVERY_MESSAGE.toByteArray(Charsets.UTF_8)
-
             val targets = linkedSetOf<InetAddress>()
+
             runCatching { targets.add(InetAddress.getByName("255.255.255.255")) }
             targets.addAll(getBroadcastAddresses())
 
@@ -57,7 +57,7 @@ object BrokerDiscovery {
             }
 
             val deadline = System.currentTimeMillis() + timeoutMs
-            val buf = ByteArray(1024)
+            val buf = ByteArray(2048)
 
             while (System.currentTimeMillis() < deadline) {
                 try {
@@ -68,7 +68,7 @@ object BrokerDiscovery {
                     val broker = parseResponse(body, resp.address.hostAddress) ?: continue
                     results[broker.serverUri] = broker
                 } catch (_: Exception) {
-                    // timeout / parse 실패는 무시
+                    // receive timeout, malformed packet 등은 무시하고 timeout까지 계속 수신
                 }
             }
         } finally {
@@ -79,45 +79,61 @@ object BrokerDiscovery {
     }
 
     private fun parseResponse(body: String, responderIp: String): BrokerInfo? {
-        // JSON 응답 대응
         try {
             val json = JSONObject(body)
-            val ip = json.optString("ip").ifBlank { responderIp }
+
+            val ip = json.optString("ip")
+                .ifBlank { json.optString("host") }
+                .ifBlank { responderIp }
+
+            val mqttUri = firstNonBlank(
+                json.optString("mqtt_uri"),
+                json.optString("serverUri")
+            )
+
             val port = json.optInt("port", 1883)
-            val name = json.optString("name").ifBlank { null }
+            val name = firstNonBlank(json.optString("name"))
+
+            val videoUrl = firstNonBlank(
+                json.optString("video_url"),
+                json.optString("mjpeg_url")
+            )
+
+            val snapshotUrl = firstNonBlank(json.optString("snapshot_url"))
 
             return BrokerInfo(
                 ip = ip,
                 port = port,
                 name = name,
-                responderIp = responderIp
+                responderIp = responderIp,
+                mqttUri = mqttUri,
+                videoUrl = videoUrl,
+                snapshotUrl = snapshotUrl
             )
         } catch (_: Exception) {
+            // JSON이 아니면 아래 legacy text format 처리
         }
 
-        // "192.168.x.x:1883" 형태 대응
         return try {
             val text = body.trim()
-            if (text.contains(":")) {
-                val parts = text.split(":")
-                val ip = parts.getOrNull(0)?.trim().orEmpty()
-                val port = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: 1883
+            if (!text.contains(":")) return null
 
-                if (ip.isNotBlank()) {
-                    BrokerInfo(
-                        ip = ip,
-                        port = port,
-                        responderIp = responderIp
-                    )
-                } else {
-                    null
-                }
+            val parts = text.split(":")
+            val ip = parts.getOrNull(0)?.trim().orEmpty()
+            val port = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: 1883
+
+            if (ip.isNotBlank()) {
+                BrokerInfo(ip = ip, port = port, responderIp = responderIp)
             } else {
                 null
             }
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun firstNonBlank(vararg values: String?): String? {
+        return values.firstOrNull { !it.isNullOrBlank() }?.trim()
     }
 
     private fun getBroadcastAddresses(): Set<InetAddress> {
@@ -136,6 +152,7 @@ object BrokerDiscovery {
                     ia.broadcast?.let { out.add(it) }
                 }
             } catch (_: Exception) {
+                // ignore
             }
         }
 
