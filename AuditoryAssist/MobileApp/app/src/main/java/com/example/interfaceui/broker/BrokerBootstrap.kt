@@ -16,7 +16,6 @@ data class BrokerConnectResult(
 )
 
 object BrokerBootstrap {
-
     fun prepare(
         context: Context,
         onResult: (BrokerConnectResult) -> Unit = {}
@@ -39,19 +38,26 @@ object BrokerBootstrap {
         }
     }
 
+    private data class Candidate(
+        val uri: String,
+        val info: BrokerInfo?
+    )
+
     private fun buildCandidateList(
         savedUri: String?,
         discovered: List<BrokerInfo>
-    ): List<String> {
-        val result = mutableListOf<String>()
+    ): List<Candidate> {
+        val result = mutableListOf<Candidate>()
+        val seen = linkedSetOf<String>()
 
-        if (!savedUri.isNullOrBlank()) {
-            result.add(savedUri)
+        if (!savedUri.isNullOrBlank() && seen.add(savedUri)) {
+            result.add(Candidate(uri = savedUri, info = null))
         }
 
         discovered.forEach { info ->
-            if (info.serverUri !in result) {
-                result.add(info.serverUri)
+            val uri = info.serverUri
+            if (seen.add(uri)) {
+                result.add(Candidate(uri = uri, info = info))
             }
         }
 
@@ -60,7 +66,7 @@ object BrokerBootstrap {
 
     private fun connectSequentially(
         appContext: Context,
-        candidates: List<String>,
+        candidates: List<Candidate>,
         index: Int,
         discoveredUris: Set<String>,
         onResult: (BrokerConnectResult) -> Unit
@@ -89,12 +95,19 @@ object BrokerBootstrap {
             return
         }
 
-        val uri = candidates[index]
+        val candidate = candidates[index]
+        val uri = candidate.uri
         val helper = MqttHelper.switchServer(appContext, uri)
 
         helper.connect(
             onConnected = {
-                BrokerPrefs.saveBrokerUri(appContext, uri)
+                BrokerPrefs.saveBrokerInfo(
+                    context = appContext,
+                    uri = uri,
+                    videoUrl = candidate.info?.videoUrl,
+                    snapshotUrl = candidate.info?.snapshotUrl,
+                    displayName = candidate.info?.displayName
+                )
 
                 PushTokenRegistrar.flushPendingToken(appContext)
 
@@ -107,7 +120,7 @@ object BrokerBootstrap {
                     )
                 )
             },
-            onError = { e ->
+            onError = {
                 connectSequentially(
                     appContext = appContext,
                     candidates = candidates,
