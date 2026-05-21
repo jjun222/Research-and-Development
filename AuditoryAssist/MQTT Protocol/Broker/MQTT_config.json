@@ -24,7 +24,7 @@
     "sensor_id": "AI_D_fire",
     "expected_event": "fire_detected",
     "handler": "handle_fire",
-    "participates_in_alltrue": true
+    "participates_in_alltrue": false
   },
 
   "water_level/sensor": {
