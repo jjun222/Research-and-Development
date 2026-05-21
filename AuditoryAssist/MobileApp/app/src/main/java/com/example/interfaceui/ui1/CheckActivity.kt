@@ -9,7 +9,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.DiffUtil
@@ -19,23 +18,21 @@ import com.example.interfaceui.MqttHelper
 import com.example.interfaceui.R
 import com.example.interfaceui.alias.DeviceAlias
 import com.example.interfaceui.broker.BrokerBootstrap
+import com.example.interfaceui.util.setupToolbarBack
 import org.json.JSONObject
 
 class CheckActivity : AppCompatActivity() {
 
-    // ▶ 신선도 TTL(초): 디바이스 45초, 서버 180초
     private val TTL_DEVICE_SEC = 45L
     private val TTL_SERVER_SEC = 180L
 
     private lateinit var recycler: RecyclerView
     private val adapter by lazy { StatusAdapter() }
 
-    // canonicalId -> Status
     private val map = linkedMapOf<String, NodeStatus>()
 
     private var isScreenActive = false
 
-    // 1초마다 신선도 체크
     private val tickHandler = Handler(Looper.getMainLooper())
     private val tick = object : Runnable {
         override fun run() {
@@ -49,7 +46,6 @@ class CheckActivity : AppCompatActivity() {
 
         val status = parseStatus(topic, payload)
 
-        // 화이트리스트 밖 ID는 표시하지 않음
         if (!DeviceAlias.shouldShow(status.id)) return@listener
 
         runOnUiThread {
@@ -63,16 +59,10 @@ class CheckActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_check)
 
-        findViewById<androidx.appcompat.widget.Toolbar?>(R.id.toolbar)?.also {
-            it.setNavigationOnClickListener { finish() }
-        }
+        setupToolbarBack()
 
         recycler = findViewById(R.id.recycler)
         recycler.adapter = adapter
-
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() = finish()
-        })
     }
 
     override fun onStart() {
@@ -97,7 +87,6 @@ class CheckActivity : AppCompatActivity() {
 
                 val helper = MqttHelper.instance ?: return@runOnUiThread
 
-                // 중복 등록 방지
                 helper.removeMessageListener(statusListener)
                 helper.addMessageListener(statusListener)
 
@@ -113,12 +102,6 @@ class CheckActivity : AppCompatActivity() {
         super.onStop()
     }
 
-    /**
-     * 토픽 + JSON/텍스트 → NodeStatus
-     * - ts_ms(밀리초) → 초로 환산
-     * - ts 없으면 0
-     * - 항상 수신시각(seenSec)을 현재초로 기록 → 텍스트 "online"만 와도 신선도 판단 가능
-     */
     private fun parseStatus(topic: String, raw: String): NodeStatus {
         val parts = topic.split('/')
         val type = (parts.getOrNull(2) ?: "unknown").lowercase()
@@ -184,7 +167,6 @@ class CheckActivity : AppCompatActivity() {
         }
     }
 
-    /** 수신 시각은 항상 갱신. tsSec=0으로 온 업데이트는 이전 tsSec 유지 */
     private fun upsert(s: NodeStatus) {
         val key = s.key()
         val old = map[key]
@@ -199,7 +181,6 @@ class CheckActivity : AppCompatActivity() {
         adapter.submitList(map.values.toList())
     }
 
-    // ===== Adapter =====
     private inner class StatusAdapter :
         ListAdapter<NodeStatus, StatusVH>(object : DiffUtil.ItemCallback<NodeStatus>() {
             override fun areItemsTheSame(o: NodeStatus, n: NodeStatus) = o.key() == n.key()
