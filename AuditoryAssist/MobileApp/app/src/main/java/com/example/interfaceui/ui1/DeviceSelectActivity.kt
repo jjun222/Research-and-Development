@@ -4,7 +4,6 @@ import android.app.AlertDialog
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
@@ -16,6 +15,7 @@ import com.example.interfaceui.R
 import com.example.interfaceui.alias.DeviceAlias
 import com.example.interfaceui.broker.BrokerBootstrap
 import com.example.interfaceui.data.DevicePrefs
+import com.example.interfaceui.util.setupToolbarBack
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
@@ -31,7 +31,6 @@ class DeviceSelectActivity : AppCompatActivity() {
     private var activeScanListener: ((String, String) -> Unit)? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    /** 저장된 ID 목록을 별칭으로 표시 */
     private fun reloadSpinner() {
         val ids = DevicePrefs.getDevices(this)
 
@@ -58,11 +57,7 @@ class DeviceSelectActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_device_select)
 
-        findViewById<View>(R.id.toolbar)?.let { tb ->
-            (tb as? androidx.appcompat.widget.Toolbar)?.setNavigationOnClickListener {
-                finish()
-            }
-        }
+        setupToolbarBack()
 
         spinner = findViewById(R.id.spinnerDevice)
         btnAdd = findViewById(R.id.btnAdd)
@@ -76,7 +71,6 @@ class DeviceSelectActivity : AppCompatActivity() {
         )
         spinner.adapter = adapter
 
-        // 화이트리스트에 없는 기존 항목은 한 번 정리
         val keep = DeviceAlias.allowedIds()
 
         DevicePrefs.getDevices(this).forEach { id ->
@@ -154,9 +148,6 @@ class DeviceSelectActivity : AppCompatActivity() {
         ).show()
     }
 
-    // =========================
-    // 자동 검색
-    // =========================
     private fun startAutoDiscovery() {
         btnScan.isEnabled = false
         Toast.makeText(this, "검색 시작…", Toast.LENGTH_SHORT).show()
@@ -186,7 +177,6 @@ class DeviceSelectActivity : AppCompatActivity() {
             }
         }
 
-        // 기존 스캔 리스너 제거
         activeScanListener?.let {
             MqttHelper.instance?.removeMessageListener(it)
         }
