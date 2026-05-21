@@ -56,9 +56,11 @@ except Exception:
 WIFI_SSID = ""
 WIFI_PASSWORD = ""
 CONFIG_PATH = "wifi_config.json"
-DEFAULT_BROKER_IP = "192.168.0.33"
+DEFAULT_BROKER_IP = ""
+DISCOVERY_PORT = 30303
+DISCOVERY_TIMEOUT_MS = 2000
 
-MQTT_BROKER = DEFAULT_BROKER_IP
+MQTT_BROKER = ""
 MQTT_TOPIC = "water_level/sensor"
 MQTT_CLIENT_ID = "water_level_1"
 STATUS_TOPIC = "interfaceui/status/publisher/" + MQTT_CLIENT_ID
@@ -117,6 +119,7 @@ Content-Type: text/html; charset=utf-8\r
 SSID: <input name='ssid'><br>
 PW: <input name='pw' type='password'><br>
 Broker IP: <input name='broker' value='%s'><br>
+<small>비워두면 같은 네트워크에서 MQTT Broker를 자동 검색합니다.</small><br>
 <button type='submit'>저장</button>
 </form></body></html>
 """ % DEFAULT_BROKER_IP
@@ -370,21 +373,147 @@ def try_connect_wifi(ssid, pw):
     return True
 
 
+def discover_mqtt_broker(timeout_ms=DISCOVERY_TIMEOUT_MS):
+    """
+    UDP Discovery로 MQTT Broker IP를 찾는다.
+    판단 서버가 UDP 30303에서 MQTT_DISCOVER 요청에 응답해야 한다.
+
+    실패해도 예외를 밖으로 던지지 않고 None을 반환한다.
+    학교/공유기 환경에서 UDP broadcast가 막힐 수 있으므로,
+    실패 시 AP 설정 모드의 Broker IP 수동 입력을 사용할 수 있다.
+    """
+    s = None
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(timeout_ms / 1000)
+
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        except Exception:
+            pass
+
+        s.sendto(b"MQTT_DISCOVER", ("255.255.255.255", DISCOVERY_PORT))
+        data, addr = s.recvfrom(512)
+
+        try:
+            s.close()
+        except Exception:
+            pass
+
+        info = ujson.loads(data.decode())
+        ip = info.get("ip") or ""
+        port = int(info.get("port", 1883))
+
+        if ip:
+            print("✅ MQTT Broker discovery 성공:", ip, port, "from", addr)
+            return ip
+
+    except Exception as e:
+        print("⚠️ MQTT Broker discovery 실패:", e)
+
+    try:
+        if s is not None:
+            s.close()
+    except Exception:
+        pass
+
+    return None
+
+
+def resolve_broker_from_config(cfg=None, allow_config=True):
+    """
+    Broker 결정 순서:
+    1. wifi_config.json의 broker 값
+    2. UDP Discovery
+    3. DEFAULT_BROKER_IP, 현재는 빈 값
+
+    allow_config=False이면 저장된 broker를 무시하고 discovery를 먼저 수행한다.
+    저장된 broker가 오래된 IP일 때 MQTT 연결 실패 후 보정하기 위한 용도다.
+    """
+    broker = ""
+
+    if allow_config:
+        try:
+            if cfg:
+                broker = (cfg.get("broker") or "").strip()
+        except Exception:
+            broker = ""
+
+        if broker:
+            print("📌 config broker 사용:", broker)
+            return broker
+
+    discovered = discover_mqtt_broker()
+    if discovered:
+        return discovered
+
+    if DEFAULT_BROKER_IP:
+        print("📌 DEFAULT_BROKER_IP 사용:", DEFAULT_BROKER_IP)
+        return DEFAULT_BROKER_IP
+
+    print("⚠️ MQTT Broker를 찾지 못했습니다.")
+    return ""
+
+
+def ensure_mqtt_broker():
+    """
+    MQTT 연결 직전에 Broker가 비어 있으면 config/discovery로 다시 찾는다.
+    """
+    global MQTT_BROKER
+
+    if MQTT_BROKER:
+        return True
+
+    MQTT_BROKER = resolve_broker_from_config(load_wifi_config(), allow_config=True)
+    return bool(MQTT_BROKER)
+
+
+def rediscover_mqtt_broker():
+    """
+    저장된 broker 값이 오래되었을 가능성이 있을 때 config broker를 무시하고
+    UDP Discovery를 다시 수행한다.
+    """
+    global MQTT_BROKER
+
+    discovered = resolve_broker_from_config(None, allow_config=False)
+    if discovered:
+        MQTT_BROKER = discovered
+        return True
+
+    return False
+
+
 def connect_wifi_from_config():
     global MQTT_BROKER
 
     cfg = load_wifi_config()
+
     if cfg:
         ssid = cfg.get("ssid")
         pw = cfg.get("password")
+
         if ssid and pw and try_connect_wifi(ssid, pw):
-            MQTT_BROKER = cfg.get("broker") or DEFAULT_BROKER_IP
-            print("🌐 config로 Wi-Fi 연결 OK, broker =", MQTT_BROKER)
+            MQTT_BROKER = resolve_broker_from_config(cfg, allow_config=True)
+
+            if MQTT_BROKER:
+                print("🌐 config로 Wi-Fi 연결 OK, broker =", MQTT_BROKER)
+            else:
+                print("⚠️ Wi-Fi 연결은 성공했지만 MQTT Broker를 아직 찾지 못했습니다.")
+                print("   → AP 모드로 바로 전환하지 않고 MQTT 연결 루프에서 discovery를 재시도합니다.")
+
+            # Wi-Fi 자체는 연결되었으므로 True를 반환한다.
+            # Broker 탐색 실패만으로 AP 모드에 들어가면 공유기/Mosquitto 부팅 순서에 취약해진다.
             return True
 
     if WIFI_SSID and WIFI_PASSWORD and try_connect_wifi(WIFI_SSID, WIFI_PASSWORD):
-        MQTT_BROKER = DEFAULT_BROKER_IP
-        print("🌐 기본 설정으로 Wi-Fi 연결 OK, broker =", MQTT_BROKER)
+        MQTT_BROKER = resolve_broker_from_config(None, allow_config=True)
+
+        if MQTT_BROKER:
+            print("🌐 기본 설정으로 Wi-Fi 연결 OK, broker =", MQTT_BROKER)
+        else:
+            print("⚠️ 기본 Wi-Fi 연결은 성공했지만 MQTT Broker를 아직 찾지 못했습니다.")
+            print("   → MQTT 연결 루프에서 discovery를 재시도합니다.")
+
         return True
 
     return False
@@ -498,26 +627,46 @@ def apply_socket_timeout():
 
 
 def mqtt_connect():
-    global client, publish_success_count
-    try:
-        close_mqtt_client()
-        gc.collect()
+    global client, publish_success_count, MQTT_BROKER
 
-        client = MQTTClient(MQTT_CLIENT_ID, MQTT_BROKER, keepalive=KEEPALIVE_SEC)
-        client.connect()
-        apply_socket_timeout()
-
-        publish_success_count = 0
-        print("✅ MQTT 연결 완료 (broker =", MQTT_BROKER, ")")
-        blink_n(5)
-
-        publish_device_status(state="online", value=None, reason="mqtt_connected")
-        return True
-
-    except Exception as e:
-        print("❌ MQTT 연결 실패:", e)
+    if not ensure_mqtt_broker():
+        print("❌ MQTT 연결 실패: Broker IP 없음")
         close_mqtt_client()
         return False
+
+    # 1차: 현재 broker(config 또는 discovery 결과)로 연결
+    # 2차: 실패 시 config broker를 무시하고 discovery로 새 broker를 찾아 재시도
+    for attempt in range(2):
+        try:
+            close_mqtt_client()
+            gc.collect()
+
+            client = MQTTClient(MQTT_CLIENT_ID, MQTT_BROKER, keepalive=KEEPALIVE_SEC)
+            client.connect()
+            apply_socket_timeout()
+
+            publish_success_count = 0
+            print("✅ MQTT 연결 완료 (broker =", MQTT_BROKER, ")")
+            blink_n(5)
+
+            publish_device_status(state="online", value=None, reason="mqtt_connected")
+            return True
+
+        except Exception as e:
+            print("❌ MQTT 연결 실패:", e)
+            close_mqtt_client()
+
+            if attempt == 0:
+                print("🔎 저장된 broker가 오래되었을 수 있어 UDP discovery 재시도")
+                if rediscover_mqtt_broker():
+                    print("🔎 새 MQTT Broker 발견 → 재시도:", MQTT_BROKER)
+                    continue
+
+            MQTT_BROKER = ""
+            return False
+
+    MQTT_BROKER = ""
+    return False
 
 
 def mqtt_ping():
@@ -832,3 +981,4 @@ def main():
 
 
 main()
+
