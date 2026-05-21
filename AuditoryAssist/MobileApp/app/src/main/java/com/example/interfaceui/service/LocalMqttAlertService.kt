@@ -299,47 +299,128 @@ class LocalMqttAlertService : Service() {
     }
 
     private fun isNormalPayload(json: JSONObject): Boolean {
-        val status = json.optString("status", "").trim().lowercase()
-        val event = json.optString("event", "").trim().lowercase()
-        val state = json.optString("state", "").trim().lowercase()
+        val values = listOf(
+            json.optString("status", ""),
+            json.optString("event", ""),
+            json.optString("state", ""),
+            json.optString("type", ""),
+            json.optString("message", ""),
+            json.optString("body", "")
+        ).map { it.trim().lowercase() }
 
-        val normalWords = listOf(
-            "정상", "normal", "clear", "safe", "off", "false", "ok"
+        return values.any { isNormalValue(it) }
+    }
+
+    private fun isNormalValue(value: String): Boolean {
+        if (value.isBlank()) return false
+
+        /*
+         * 중요:
+         * contains("normal") 방식 사용 금지.
+         * "ABNORMAL" 안에 "normal"이 포함되어 있어 수위/초인종 위험 이벤트를 정상으로 오판할 수 있음.
+         */
+        if (value.contains("abnormal") || value.contains("비정상")) {
+            return false
+        }
+
+        val normalExactWords = setOf(
+            "0",
+            "false",
+            "off",
+            "normal",
+            "clear",
+            "safe",
+            "ok",
+            "정상"
         )
 
-        return normalWords.any { word ->
-            status.contains(word) || event.contains(word) || state.contains(word)
-        }
+        if (value in normalExactWords) return true
+
+        // 한국어 정상 보고는 "정상 보고", "상태 정상"처럼 들어올 수 있어 별도 처리
+        if (value.contains("정상") && !value.contains("비정상")) return true
+
+        return value == "status_normal" ||
+            value == "normal_report" ||
+            value == "normal_state"
     }
 
     private fun isDetectedPayload(topic: String, json: JSONObject): Boolean {
         val status = json.optString("status", "").trim().lowercase()
         val event = json.optString("event", "").trim().lowercase()
+        val state = json.optString("state", "").trim().lowercase()
+        val message = json.optString("message", "").trim().lowercase()
+        val body = json.optString("body", "").trim().lowercase()
+        val jsonType = json.optString("type", "").trim().lowercase()
         val type = typeFromTopic(topic)
 
+        val joined = listOf(status, event, state, message, body, jsonType).joinToString(" ")
+
+        /*
+         * 수위/초인종은 ABNORMAL, water_detected, button_pressed,
+         * 수위 감지, 초인종 감지, 버튼 감지 등 여러 형태로 들어올 수 있어서 넓게 처리한다.
+         */
         val dangerWords = listOf(
-            "위험", "감지", "화재",
-            "detected", "detect", "alert", "warning", "danger",
-            "fire", "gas", "co", "flame", "smoke",
-            "pressed", "ring", "bell",
-            "water", "leak", "flood", "overflow", "wet"
+            "abnormal",
+            "비정상",
+            "위험",
+            "감지",
+            "화재",
+            "detected",
+            "detect",
+            "alert",
+            "warning",
+            "danger",
+            "fire",
+            "gas",
+            "co",
+            "flame",
+            "smoke",
+            "pressed",
+            "press",
+            "button",
+            "doorbell",
+            "ring",
+            "bell",
+            "water",
+            "level",
+            "leak",
+            "flood",
+            "overflow",
+            "wet",
+            "high",
+            "수위",
+            "물",
+            "누수",
+            "초인종",
+            "버튼"
         )
 
-        if (dangerWords.any { word -> status.contains(word) || event.contains(word) }) {
+        if (dangerWords.any { word -> joined.contains(word) }) {
             return true
         }
 
         if (json.optBoolean("detected", false)) return true
         if (json.optBoolean("alert", false)) return true
         if (json.optBoolean("pressed", false)) return true
+        if (json.optBoolean("button", false)) return true
         if (json.optBoolean("ring", false)) return true
         if (json.optBoolean("bell", false)) return true
         if (json.optBoolean("wet", false)) return true
         if (json.optBoolean("overflow", false)) return true
+        if (json.optBoolean("water", false)) return true
 
         val intFields = listOf(
-            "detected", "alert", "pressed", "ring", "bell", "wet", "overflow"
+            "detected",
+            "alert",
+            "pressed",
+            "button",
+            "ring",
+            "bell",
+            "wet",
+            "overflow",
+            "water"
         )
+
         if (intFields.any { field -> json.optInt(field, 0) == 1 }) {
             return true
         }
@@ -347,26 +428,21 @@ class LocalMqttAlertService : Service() {
         if (type == "flame" && event.contains("shz_detected")) return true
         if (type == "ai_fire" && event.contains("fire_detected")) return true
         if (type == "water" && event.contains("water")) return true
+        if (type == "water" && event.contains("level")) return true
+        if (type == "water" && event.contains("overflow")) return true
         if (type == "doorbell" && event.contains("doorbell")) return true
+        if (type == "doorbell" && event.contains("button")) return true
+        if (type == "doorbell" && event.contains("pressed")) return true
 
         return false
     }
 
     private fun parseTextAlertOrNull(topic: String, payload: String): ParsedAlert? {
-        val lower = payload.trim().lowercase()
-
-        val normalWords = listOf("0", "false", "off", "normal", "clear", "safe", "정상")
-        if (normalWords.any { lower == it || lower.contains(it) }) {
+        if (isNormalText(payload)) {
             return null
         }
 
-        val dangerWords = listOf(
-            "1", "true", "on", "detected", "alert", "warning", "danger",
-            "fire", "flame", "gas", "co", "smoke", "ring", "pressed", "bell",
-            "water", "leak", "flood", "overflow", "wet", "감지", "위험", "화재"
-        )
-
-        if (!dangerWords.any { lower == it || lower.contains(it) }) {
+        if (!isDetectedText(payload)) {
             return null
         }
 
@@ -446,7 +522,6 @@ class LocalMqttAlertService : Service() {
         }
 
         allTrueActive = true
-        lastEmergencyShownAt = now
         return true
     }
 
@@ -506,22 +581,65 @@ class LocalMqttAlertService : Service() {
     private fun isDetectedText(payload: String): Boolean {
         val lower = payload.trim().lowercase()
 
-        val dangerWords = listOf(
-            "1", "true", "on", "detected", "alert", "warning", "danger",
-            "fire", "flame", "gas", "co", "smoke", "감지", "위험", "화재"
+        val dangerExactWords = setOf(
+            "1",
+            "true",
+            "on",
+            "abnormal",
+            "detected",
+            "alert",
+            "warning",
+            "danger",
+            "pressed",
+            "wet",
+            "overflow",
+            "감지",
+            "위험",
+            "비정상"
         )
 
-        return dangerWords.any { lower == it || lower.contains(it) }
+        if (lower in dangerExactWords) return true
+
+        val dangerContainsWords = listOf(
+            "abnormal",
+            "detected",
+            "detect",
+            "alert",
+            "warning",
+            "danger",
+            "fire",
+            "flame",
+            "gas",
+            "co",
+            "smoke",
+            "ring",
+            "pressed",
+            "press",
+            "button",
+            "doorbell",
+            "bell",
+            "water",
+            "level",
+            "leak",
+            "flood",
+            "overflow",
+            "wet",
+            "감지",
+            "위험",
+            "화재",
+            "수위",
+            "물",
+            "누수",
+            "초인종",
+            "버튼"
+        )
+
+        return dangerContainsWords.any { word -> lower.contains(word) }
     }
 
     private fun isNormalText(payload: String): Boolean {
         val lower = payload.trim().lowercase()
-
-        val normalWords = listOf(
-            "0", "false", "off", "normal", "clear", "safe", "정상"
-        )
-
-        return normalWords.any { lower == it || lower.contains(it) }
+        return isNormalValue(lower)
     }
 
     /*
@@ -641,8 +759,8 @@ class LocalMqttAlertService : Service() {
             "flame" -> "불꽃 센서가 감지되었습니다."
             "gas" -> "가스 센서가 위험 상태를 감지했습니다."
             "co" -> "일산화탄소 센서가 위험 상태를 감지했습니다."
-            "water" -> "수위 센서가 감지되었습니다."
-            "doorbell" -> "초인종 버튼이 감지되었습니다."
+            "water" -> "수위 센서가 감지되었습니다. 물 넘침 또는 누수 상태를 확인해주세요."
+            "doorbell" -> "초인종 버튼이 감지되었습니다. 출입문을 확인해주세요."
             else -> "시스템 알림이 수신되었습니다."
         }
     }
