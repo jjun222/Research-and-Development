@@ -11,8 +11,10 @@ import androidx.core.widget.doOnTextChanged
 import com.example.interfaceui.MqttHelper
 import com.example.interfaceui.R
 import com.example.interfaceui.WifiSettingsActivity
-import com.example.interfaceui.data.DevicePrefs
 import com.example.interfaceui.alias.DeviceAlias
+import com.example.interfaceui.broker.BrokerBootstrap
+import com.example.interfaceui.data.DevicePrefs
+import com.example.interfaceui.util.setupToolbarBack
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
@@ -20,11 +22,9 @@ import com.google.android.material.textfield.TextInputEditText
 import org.json.JSONObject
 import yuku.ambilwarna.AmbilWarnaDialog
 import java.util.Locale
-import com.example.interfaceui.broker.BrokerBootstrap
 
 class SettingActivity : AppCompatActivity() {
 
-    // UI
     private lateinit var deviceSpinner: Spinner
     private lateinit var btnPickColor: MaterialButton
     private lateinit var btnApply: MaterialButton
@@ -34,15 +34,14 @@ class SettingActivity : AppCompatActivity() {
     private lateinit var previewSwatch: View
     private lateinit var chipGroupPreset: ChipGroup
 
-    // State
     private var currentColor: Int = Color.WHITE
     private var currentBrightness: Int = 255
     private var suppressHexWatcher = false
 
     private enum class Source { HEX, PICKER, CHIP, RESTORE }
+
     private val prefs by lazy { getSharedPreferences("setting_prefs", MODE_PRIVATE) }
 
-    /** 스피너 항목(표시는 label, 실제 값은 id) */
     private data class DeviceOption(val id: String?, val label: String) {
         override fun toString(): String = label
     }
@@ -50,6 +49,8 @@ class SettingActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_setting)
+
+        setupToolbarBack()
 
         deviceSpinner = findViewById(R.id.deviceSpinner)
         btnPickColor = findViewById(R.id.btnPickColor)
@@ -96,15 +97,18 @@ class SettingActivity : AppCompatActivity() {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 currentBrightness = progress
             }
+
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
                 saveBrightness()
             }
         })
 
         btnApply.setOnClickListener {
-            val target = selectedTargetFromSpinner() // id or null(ALL)
+            val target = selectedTargetFromSpinner()
             val ok = publishMood(currentColor, currentBrightness, target)
+
             Toast.makeText(
                 this,
                 if (ok) "적용되었습니다." else "MQTT 연결이 되지 않았습니다.",
@@ -112,7 +116,6 @@ class SettingActivity : AppCompatActivity() {
             ).show()
         }
 
-        // 🔵 Wi-Fi / 브로커 설정 화면으로 이동
         findViewById<MaterialButton>(R.id.btnWifiSettings)?.setOnClickListener {
             startActivity(Intent(this, WifiSettingsActivity::class.java))
         }
@@ -138,7 +141,6 @@ class SettingActivity : AppCompatActivity() {
         }
     }
 
-    /** 스피너: 첫 항목은 ALL(=null), 이후 화이트리스트 내 저장 장치만 별칭으로 표시 */
     private fun populateDeviceSpinner() {
         val ids = DevicePrefs.getDevices(this)
             .filter { DeviceAlias.shouldShow(it) }
@@ -151,7 +153,6 @@ class SettingActivity : AppCompatActivity() {
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options)
         deviceSpinner.adapter = adapter
 
-        // 저장된 선택 복원
         val selectedId = DevicePrefs.getSelected(this)
         val idx = options.indexOfFirst { it.id == selectedId }
         deviceSpinner.setSelection(if (idx >= 0) idx else 0)
@@ -164,7 +165,7 @@ class SettingActivity : AppCompatActivity() {
                 id: Long
             ) {
                 val pick = options[position]
-                DevicePrefs.setSelected(this@SettingActivity, pick.id) // null이면 ALL
+                DevicePrefs.setSelected(this@SettingActivity, pick.id)
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) {}
@@ -173,11 +174,14 @@ class SettingActivity : AppCompatActivity() {
 
     private fun setColor(color: Int, from: Source) {
         currentColor = color
+
         previewSwatch.background?.let { bg ->
             DrawableCompat.setTint(DrawableCompat.wrap(bg).mutate(), color)
         }
+
         if (from != Source.HEX) {
             val hex = String.format("#%06X", 0xFFFFFF and color)
+
             if (!hex.equals(etHex.text?.toString(), ignoreCase = true)) {
                 suppressHexWatcher = true
                 etHex.setText(hex)
@@ -185,6 +189,7 @@ class SettingActivity : AppCompatActivity() {
                 suppressHexWatcher = false
             }
         }
+
         saveColor()
     }
 
@@ -198,12 +203,15 @@ class SettingActivity : AppCompatActivity() {
 
     private fun publishMood(colorInt: Int, brightness: Int, target: String? = null): Boolean {
         val hex = String.format("#%06X", 0xFFFFFF and colorInt)
+
         val map = mutableMapOf(
             "command" to "set_mood",
             "color" to hex,
             "brightness" to brightness.coerceIn(0, 255)
         )
+
         target?.let { map["target"] = it }
+
         val payload = JSONObject(map as Map<*, *>).toString()
 
         return MqttHelper.instance?.publish(
@@ -214,7 +222,6 @@ class SettingActivity : AppCompatActivity() {
         ) ?: false
     }
 
-    /** 현재 스피너 선택의 ID(null=ALL) */
     private fun selectedTargetFromSpinner(): String? {
         val opt = deviceSpinner.selectedItem as? DeviceOption ?: return null
         return opt.id
@@ -222,11 +229,14 @@ class SettingActivity : AppCompatActivity() {
 
     private fun normalizeHex(input: String): String? {
         var s = input.trim().removePrefix("#").uppercase(Locale.US)
+
         if (s.length == 3) {
             s = "${s[0]}${s[0]}${s[1]}${s[1]}${s[2]}${s[2]}"
         }
+
         if (s.length != 6) return null
         if (!s.matches(Regex("[0-9A-F]{6}"))) return null
+
         return s
     }
 }
