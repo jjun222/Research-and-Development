@@ -819,7 +819,7 @@ def handle_message(topic_bytes, message_bytes):
 
         if cmd in ("fire_warning", "yellow_flash"):
             cmd = "hex_flash"
-            if sensor_id == "gas_sensor_pico":
+            if sensor_id in ("gas_sensor_pico", "mq7_sensor_pico"):
                 data["color"] = data.get("color", "#8300FD")
             else:
                 data["color"] = data.get("color", "#FD6A00")
