@@ -27,6 +27,7 @@ LOG_HISTORY_PREFIX = "interfaceui/logs/history"
 
 VIBRATOR_TOPIC_PREFIX = "vibrator"
 BEACON_TOPIC_PREFIX   = "beacon"
+FIRE_CONFIRMED_TOPIC  = "alerts/fire_confirmed"
 VERBOSE_PUBLISH_LOG = False
 
 # all-True / 화재 경고 설정값
@@ -40,17 +41,32 @@ with open("MQTT_config.json", "r", encoding="utf-8") as f:
 
 MQTT_TOPICS = list(config.keys())
 
+# 교수님 요청 반영:
+# - AI 불 감지 카메라는 all-True 조합을 기다리지 않고 단독으로 화재 확정 동작
+# - all-True 조합은 불꽃 + 일산화탄소 + 가스 3개만 사용
+AI_FIRE_TOPIC = "AI_fire_alert"
+AI_FIRE_SENSOR_ID = "AI_D_fire"
+ALLTRUE_EXCLUDED_TOPICS = {AI_FIRE_TOPIC}
+ALLTRUE_EXCLUDED_SENSOR_IDS = {AI_FIRE_SENSOR_ID}
+
+ALLTRUE_REQUIRED_SENSOR_IDS = [
+    cfg["sensor_id"]
+    for topic, cfg in config.items()
+    if cfg.get("participates_in_alltrue", True)
+    and topic not in ALLTRUE_EXCLUDED_TOPICS
+    and cfg.get("sensor_id") not in ALLTRUE_EXCLUDED_SENSOR_IDS
+]
+
 # all-True에 참여하는 센서들의 현재 상태
 MQTT_event_status = {
-    cfg["sensor_id"]: False
-    for cfg in config.values()
-    if cfg.get("participates_in_alltrue", True)
+    sid: False
+    for sid in ALLTRUE_REQUIRED_SENSOR_IDS
 }
 
 # all-True에 참여하는 센서들의 마지막 위험 감지 시간
 MQTT_event_detected_at_ms = {
     sid: 0
-    for sid in MQTT_event_status.keys()
+    for sid in ALLTRUE_REQUIRED_SENSOR_IDS
 }
 
 
@@ -111,6 +127,7 @@ userdata = {
     # all-True 상태 관리
     "sensor_status": MQTT_event_status,
     "sensor_detected_at_ms": MQTT_event_detected_at_ms,
+    "alltrue_required_sensor_ids": ALLTRUE_REQUIRED_SENSOR_IDS,
     "alltrue_window_ms": ALLTRUE_WINDOW_MS,
     "alltrue_debounce_ms": ALLTRUE_DEBOUNCE_MS,
     "last_alltrue_ms": 0,
@@ -431,16 +448,19 @@ def publish_fire_alert(
     화재 확정 상태 공통 출력 함수.
 
     사용 위치:
-    1. 최근 감지 시간 기반 all-True 발생
-    2. Node-RED 화재 트리거 fire_test 발생
+    1. AI 불 감지 카메라가 감지된 경우
+    2. 불꽃 + CO + 가스 3개가 최근 alltrue_window_ms 안에 모두 감지된 경우
+    3. Node-RED 화재 트리거 fire_test / fire_trigger / force_fire_alert 발생
 
     동작:
     1. fire_alert lock 설정
-    2. 무드등 빨간 점멸 명령 전송
+    2. 무드등 빨간색 ↔ 기존 평상시 색상 점멸 명령 전송
     3. 진동장치 명령 전송
     4. 경광등 명령 전송
+    5. 앱/로컬 알림용 alerts/fire_confirmed publish
     """
     duration_ms = int(duration_ms)
+    ts_ms = _now_ts_ms()
 
     set_fire_alert_lock(context, duration_ms)
 
@@ -451,7 +471,7 @@ def publish_fire_alert(
         "issuer": "decision_server",
         "source": source,
         "duration_ms": duration_ms,
-        "ts_ms": _now_ts_ms(),
+        "ts_ms": ts_ms,
     }
 
     for dev in (context.get("devices") or ["Neopixel_1"]):
@@ -496,19 +516,50 @@ def publish_fire_alert(
         sensor_id=sensor_id,
     )
 
+    alert_payload = {
+        "type": "fire_confirmed",
+        "level": "critical",
+        "command": "fire_confirmed",
+        "source": source,
+        "sensor_id": sensor_id,
+        "title": "화재 감지",
+        "body": "화재 위험 조건이 충족되어 무드등, 진동장치, 경광등을 동작합니다.",
+        "duration_ms": duration_ms,
+        "ts_ms": ts_ms,
+    }
+
+    client.publish(
+        FIRE_CONFIRMED_TOPIC,
+        json.dumps(alert_payload, ensure_ascii=False),
+        qos=1,
+        retain=False,
+    )
+
+    log_publish(
+        client,
+        typ="server",
+        id_="server",
+        level="warning",
+        msg="fire confirmed alert published",
+        topic=FIRE_CONFIRMED_TOPIC,
+        sensor_id=sensor_id,
+        source=source,
+        duration_ms=duration_ms,
+    )
+
 
 def all_True_publisher(client, context):
     """
     최근 alltrue_window_ms 안에 all-True 대상 센서들이 모두 감지되었는지 확인한다.
 
-    기존 방식:
-        현재 sensor_status 값이 모두 True일 때만 all-True
-
-    개선 방식:
-        최근 15초 안에 4개 감지 이벤트가 모두 들어오면 all-True
-        Node-RED 테스트뿐 아니라 실제 센서의 순차 감지/정상 메시지 간섭에도 더 안정적이다.
+    변경 후 기준:
+    - AI 불 감지 카메라는 all-True 조합에서 제외
+    - 불꽃 + 일산화탄소 + 가스 3개가 15초 안에 모두 감지되면 화재 확정
     """
-    required = list(context.get("sensor_status", {}).keys())
+    required = list(
+        context.get("alltrue_required_sensor_ids")
+        or context.get("sensor_status", {}).keys()
+    )
     detected_at = context.get("sensor_detected_at_ms", {})
     now = _now_ts_ms()
 
@@ -528,6 +579,7 @@ def all_True_publisher(client, context):
 
     print(
         f"🧪 all-True window check: "
+        f"required={required}, "
         f"window={window_ms}ms, "
         f"detected_at={detected_at}, "
         f"missing={missing}"
@@ -542,7 +594,7 @@ def all_True_publisher(client, context):
         print("🔕 ALL-TRUE debounce skip")
         return
 
-    print("🚨 ALL-TRUE detected by recent detection window")
+    print("🚨 ALL-TRUE detected by 3-sensor recent detection window")
 
     context["last_alltrue_ms"] = now
 
@@ -550,7 +602,7 @@ def all_True_publisher(client, context):
         client,
         context,
         sensor_id="all_true",
-        source="all_true_window",
+        source="three_sensor_all_true_window",
         duration_ms=FIRE_ALERT_DEFAULT_DURATION_MS,
     )
 
@@ -769,7 +821,36 @@ def on_message(client, context, msg):
 
         handler(payload, client, context)
 
-        if cfg.get("participates_in_alltrue", True):
+        # 교수님 요청 반영:
+        # AI 불 감지 카메라는 all-True 조합을 기다리지 않고
+        # 감지 즉시 무드등 빨간 점멸 + 진동 + 경광등을 동작시킨다.
+        if topic == AI_FIRE_TOPIC:
+            publish_fire_alert(
+                client,
+                context,
+                sensor_id=payload.get("sensor_id", AI_FIRE_SENSOR_ID),
+                source="ai_camera_direct",
+                duration_ms=FIRE_ALERT_DEFAULT_DURATION_MS,
+            )
+
+            log_publish(
+                client,
+                typ="server",
+                id_="server",
+                level="warning",
+                msg="AI fire direct trigger received",
+                sensor_id=payload.get("sensor_id", AI_FIRE_SENSOR_ID),
+                topic=topic,
+            )
+            return
+
+        # 나머지 all-True 대상 센서는 MQTT_config.json 기준 + 서버 내부 제외 리스트 기준으로 판단한다.
+        # 현재 기준: 불꽃 + CO + 가스
+        if (
+            cfg.get("participates_in_alltrue", True)
+            and topic not in ALLTRUE_EXCLUDED_TOPICS
+            and cfg.get("sensor_id") not in ALLTRUE_EXCLUDED_SENSOR_IDS
+        ):
             all_True_publisher(client, context)
 
     except Exception as e:
@@ -816,6 +897,8 @@ def loop():
             client.connect(BROKER_IP, BROKER_PORT, keepalive=KEEPALIVE)
 
             print("🚀 판단 서버 실행 중")
+            print(f"🧪 all-True required sensors: {ALLTRUE_REQUIRED_SENSOR_IDS}")
+            print(f"🔥 AI direct fire topic: {AI_FIRE_TOPIC}")
 
             last_hello = time.time()
             last_hb_log = time.time()
