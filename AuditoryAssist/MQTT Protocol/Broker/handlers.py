@@ -81,7 +81,7 @@ def handle_mq7(payload, client, context):
         return
     context["sensor_status"][sid] = True
     print(f"☠️ MQ7 위험 감지: sensor={sid}, status={status}, value={value}")
-    publish_hex_flash(client, context, "#FD6A00", sensor_id=sid, duration_sec=5)
+    publish_hex_flash(client, context, "#8300FD", sensor_id=sid, duration_sec=5)
     alert_message("일산화탄소 감지", "일산화탄소 센서에서 일산화탄소가 감지 되었습니다.")
 
 @register_handler("handle_gas")
