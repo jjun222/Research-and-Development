@@ -13,6 +13,7 @@ import com.example.interfaceui.R
 import com.example.interfaceui.adapter.NotificationAdapter
 import com.example.interfaceui.data.AppDatabase
 import com.example.interfaceui.data.NotificationEntity
+import com.example.interfaceui.util.setupToolbarBack
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -32,13 +33,7 @@ class NotificationActivity : AppCompatActivity() {
         enableEdgeToEdge()
         setContentView(R.layout.activity_notification)
 
-        findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar)?.apply {
-            title = getString(R.string.notifications_title)
-            setNavigationIcon(R.drawable.ic_arrow_back_24)
-            setNavigationOnClickListener {
-                onBackPressedDispatcher.onBackPressed()
-            }
-        }
+        setupToolbarBack(titleText = getString(R.string.notifications_title))
 
         val rv = findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.recyclerView)
         tvEmpty = findViewById(R.id.tvEmpty)
