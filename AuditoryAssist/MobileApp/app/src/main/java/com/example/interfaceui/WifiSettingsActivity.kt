@@ -10,6 +10,7 @@ import com.example.interfaceui.databinding.ActivityWifiSettingsBinding
 import com.example.interfaceui.net.BrokerDiscovery
 import com.example.interfaceui.net.BrokerInfo
 import com.example.interfaceui.service.PushAlertService
+import com.example.interfaceui.util.setupToolbarBack
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -18,7 +19,6 @@ class WifiSettingsActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityWifiSettingsBinding
 
-    // 발견/연결 기록 전용 SharedPreferences
     private val prefs by lazy {
         getSharedPreferences("broker_discovery", MODE_PRIVATE)
     }
@@ -32,6 +32,8 @@ class WifiSettingsActivity : AppCompatActivity() {
 
         binding = ActivityWifiSettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        setupToolbarBack()
 
         loadHistory()
 
@@ -84,9 +86,11 @@ class WifiSettingsActivity : AppCompatActivity() {
         val message = buildString {
             append("해당 브로커와 연결 하시겠습니까?")
             append("\n\n")
+
             if (!info.name.isNullOrBlank()) {
                 append("이름: ${info.name}\n")
             }
+
             append("IP: ${info.ip}\n")
             append("PORT: ${info.port}")
         }
@@ -105,11 +109,11 @@ class WifiSettingsActivity : AppCompatActivity() {
         binding.btnDiscoverBroker.isEnabled = false
 
         val helper = MqttHelper.switchServer(applicationContext, info.serverUri)
+
         helper.connect(
             onConnected = {
                 binding.btnDiscoverBroker.isEnabled = true
 
-                // 연결 성공했을 때만 저장
                 BrokerPrefs.saveBrokerUri(applicationContext, info.serverUri)
 
                 prefs.edit()
@@ -119,7 +123,6 @@ class WifiSettingsActivity : AppCompatActivity() {
 
                 appendConnectionHistory(info)
 
-                // 새 브로커 기준으로 토큰 재등록
                 PushAlertService.ensureTokenRegistered(applicationContext)
 
                 Toast.makeText(
