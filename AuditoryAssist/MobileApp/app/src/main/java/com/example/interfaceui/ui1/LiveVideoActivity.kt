@@ -12,7 +12,7 @@ import androidx.lifecycle.lifecycleScope
 import com.example.interfaceui.R
 import com.example.interfaceui.broker.BrokerPrefs
 import com.example.interfaceui.net.MjpegReader
-import com.google.android.material.appbar.MaterialToolbar
+import com.example.interfaceui.util.setupToolbarBack
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
@@ -35,15 +35,14 @@ class LiveVideoActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_live_video)
 
+        setupToolbarBack()
+
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         img = findViewById(R.id.imgFrame)
         tvStatus = findViewById(R.id.tvStatus)
         tvFps = findViewById(R.id.tvFps)
-
-        findViewById<MaterialToolbar>(R.id.toolbar)
-            ?.setNavigationOnClickListener { onBackPressedDispatcher.onBackPressed() }
 
         findViewById<com.google.android.material.button.MaterialButton>(R.id.btnReconnect)
             .setOnClickListener { restartStream() }
@@ -60,19 +59,15 @@ class LiveVideoActivity : AppCompatActivity() {
     }
 
     private fun resolveStreamUrl(): String? {
-        // 1순위: Activity 호출자가 넘긴 URL
         val fromIntent = intent.getStringExtra(EXTRA_VIDEO_URL)
             ?.trim()
             ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
 
         if (!fromIntent.isNullOrBlank()) return fromIntent
 
-        // 2순위: MQTT registry에서 저장된 AI 카메라 URL
         val saved = BrokerPrefs.getVideoUrlOrNull(applicationContext)
         if (!saved.isNullOrBlank()) return saved
 
-        // 3순위: 제품 기본 hostname. IP가 아니라 AI 카메라 AP/Ubuntu hostname 기준이다.
-        // AI 카메라 Pi에서 hostnamectl set-hostname ai-camera + avahi-daemon 설정이 되어 있어야 한다.
         return DEFAULT_AI_CAMERA_URL
     }
 
@@ -84,11 +79,13 @@ class LiveVideoActivity : AppCompatActivity() {
 
         if (url.isNullOrBlank()) {
             tvStatus.text = "카메라 영상 주소가 설정되지 않았습니다."
+
             Toast.makeText(
                 this,
                 "AI 카메라 주소가 없습니다. MQTT registry 수신 또는 Wi-Fi 설정을 확인하세요.",
                 Toast.LENGTH_SHORT
             ).show()
+
             return
         }
 
