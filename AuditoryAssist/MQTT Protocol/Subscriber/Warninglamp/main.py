@@ -44,10 +44,12 @@ DEVICE_ID = "Beacon_1"
 WIFI_SSID = ""
 WIFI_PASSWORD = ""
 CONFIG_PATH = "wifi_config.json"
-DEFAULT_BROKER_IP = "192.168.0.33"
-BROKER = DEFAULT_BROKER_IP
+DEFAULT_BROKER_IP = ""
+BROKER = ""
 PORT = 1883
 KEEPALIVE = 60
+DISCOVERY_PORT = 30303
+DISCOVERY_TIMEOUT_MS = 2000
 
 TOPIC_CMD = f"beacon/{DEVICE_ID}"
 TOPIC_STATUS = f"interfaceui/status/subscriber/{DEVICE_ID}"
@@ -91,6 +93,7 @@ Content-Type: text/html; charset=utf-8\r
 SSID: <input name="ssid"><br>
 PW: <input name="pw" type="password"><br>
 Broker IP: <input name="broker" value="%s"><br>
+<small>비워두면 같은 네트워크에서 MQTT Broker를 자동 검색합니다.</small><br>
 <button type="submit">저장</button>
 </form></body></html>
 """ % (DEVICE_ID, DEFAULT_BROKER_IP)
@@ -112,6 +115,7 @@ recovery_fail_count = 0
 publish_success_count = 0
 publish_fail_count = 0
 last_mqtt_ok_ms = time.ticks_ms()
+failed_brokers = []
 
 # =========================================================
 # Basic helpers
@@ -122,10 +126,22 @@ def now_ts():
 def note_mqtt_ok():
     global last_mqtt_ok_ms
     last_mqtt_ok_ms = time.ticks_ms()
+failed_brokers = []
 
 def check_mqtt_inactivity(now_ms):
     if time.ticks_diff(now_ms, last_mqtt_ok_ms) >= NO_MQTT_ACTIVITY_MS:
         hard_recover("beacon mqtt inactivity timeout")
+
+def mark_broker_failed(broker):
+    global failed_brokers
+    if broker and broker not in failed_brokers:
+        failed_brokers.append(broker)
+        if len(failed_brokers) > 3:
+            failed_brokers.pop(0)
+
+def clear_failed_brokers():
+    global failed_brokers
+    failed_brokers = []
 
 def set_led(on):
     if ONBOARD_LED is not None:
@@ -284,20 +300,136 @@ def try_connect_wifi(ssid, password, force_reset=True):
     blink_n(3)
     return True
 
+def _candidate_broadcast_addresses():
+    addrs = ["255.255.255.255"]
+    try:
+        if wlan is not None and wlan.isconnected():
+            ip = wlan.ifconfig()[0]
+            parts = ip.split(".")
+            if len(parts) == 4:
+                addrs.append("%s.%s.%s.255" % (parts[0], parts[1], parts[2]))
+    except Exception:
+        pass
+    return addrs
+
+def discover_mqtt_broker(timeout_ms=DISCOVERY_TIMEOUT_MS):
+    """
+    UDP Discovery로 MQTT Broker IP를 찾는다.
+    판단서버가 UDP 30303에서 MQTT_DISCOVER 요청에 응답해야 한다.
+    실패하면 None을 반환하며, AP 설정 모드의 수동 Broker 입력을 fallback으로 사용한다.
+    """
+    s = None
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.settimeout(timeout_ms / 1000)
+        except Exception:
+            s.settimeout(2)
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        except Exception:
+            pass
+
+        for bcast in _candidate_broadcast_addresses():
+            try:
+                s.sendto(b"MQTT_DISCOVER", (bcast, DISCOVERY_PORT))
+            except Exception as exc:
+                print("⚠️ discovery broadcast 실패:", bcast, exc)
+
+        data, addr = s.recvfrom(512)
+        info = json.loads(data.decode())
+
+        ip = (info.get("ip") or "").strip()
+        port = int(info.get("port", PORT))
+
+        if ip:
+            print("✅ MQTT Broker discovery 성공:", ip, port, "from", addr)
+            return ip
+
+    except Exception as exc:
+        print("⚠️ MQTT Broker discovery 실패:", exc)
+
+    try:
+        if s is not None:
+            s.close()
+    except Exception:
+        pass
+
+    return None
+
+def resolve_broker_from_config(config=None):
+    """
+    Broker 결정 순서:
+    1. wifi_config.json의 broker
+    2. UDP Discovery
+    3. DEFAULT_BROKER_IP, 현재는 빈 값
+    """
+    broker = ""
+
+    try:
+        if config:
+            broker = (config.get("broker") or "").strip()
+    except Exception:
+        broker = ""
+
+    if broker:
+        if broker not in failed_brokers:
+            print("📌 config broker 사용:", broker)
+            return broker
+        print("⚠️ 최근 연결 실패 broker는 일단 건너뜀:", broker)
+
+    discovered = discover_mqtt_broker()
+    if discovered:
+        return discovered
+
+    if DEFAULT_BROKER_IP:
+        print("📌 DEFAULT_BROKER_IP 사용:", DEFAULT_BROKER_IP)
+        return DEFAULT_BROKER_IP
+
+    print("⚠️ MQTT Broker를 찾지 못했습니다.")
+    return ""
+
+def ensure_mqtt_broker():
+    global BROKER
+
+    if BROKER:
+        return True
+
+    BROKER = resolve_broker_from_config(load_wifi_config())
+    return bool(BROKER)
+
+def rediscover_mqtt_broker():
+    global BROKER
+
+    discovered = discover_mqtt_broker()
+    if discovered:
+        print("🔎 MQTT Broker 재검색 결과:", discovered)
+        BROKER = discovered
+        return True
+
+    return False
+
 def connect_wifi_from_config(force_reset=True):
     global BROKER
+
     config = load_wifi_config()
     if config:
         ssid = config.get("ssid")
         password = config.get("password")
         if ssid and password and try_connect_wifi(ssid, password, force_reset):
-            BROKER = config.get("broker") or DEFAULT_BROKER_IP
-            print("🌐 config로 Wi-Fi 연결 OK, broker =", BROKER)
+            BROKER = resolve_broker_from_config(config)
+            if BROKER:
+                print("🌐 config로 Wi-Fi 연결 OK, broker =", BROKER)
+            else:
+                print("⚠️ Wi-Fi 연결은 성공했지만 MQTT Broker를 찾지 못했습니다.")
             return True
 
     if WIFI_SSID and WIFI_PASSWORD and try_connect_wifi(WIFI_SSID, WIFI_PASSWORD, force_reset):
-        BROKER = DEFAULT_BROKER_IP
-        print("🌐 기본 설정으로 Wi-Fi 연결 OK, broker =", BROKER)
+        BROKER = resolve_broker_from_config(None)
+        if BROKER:
+            print("🌐 기본 설정으로 Wi-Fi 연결 OK, broker =", BROKER)
+        else:
+            print("⚠️ 기본 Wi-Fi 연결은 성공했지만 MQTT Broker를 찾지 못했습니다.")
         return True
 
     return False
@@ -482,28 +614,48 @@ def make_client():
     return mqtt
 
 def mqtt_connect_and_subscribe():
-    global client, publish_success_count, publish_fail_count
-    print("📡 MQTT 연결 시도 중... (broker =", BROKER, ")")
-    close_mqtt_client()
-    client = make_client()
-    try:
-        client.set_callback(handle_message)
-        client.connect()
-        apply_socket_timeout()
-        client.subscribe(TOPIC_CMD, qos=1)
-        client.subscribe(TOPIC_REQ, qos=1)
-        publish_success_count = 0
-        publish_fail_count = 0
-        publish_status(True, "mqtt_connected")
-        publish_hello()
-        note_mqtt_ok()
-        log("info", "mqtt connected")
-        blink_n(5)
-        return True
-    except Exception as exc:
-        print("MQTT connect err:", exc)
+    global client, publish_success_count, publish_fail_count, BROKER
+
+    if not ensure_mqtt_broker():
+        print("❌ MQTT 연결 실패: Broker IP 없음")
         close_mqtt_client()
         return False
+
+    for attempt in range(2):
+        current_broker = BROKER
+        print("📡 MQTT 연결 시도 중... (broker =", BROKER, ", attempt =", attempt + 1, ")")
+        close_mqtt_client()
+        client = make_client()
+
+        try:
+            client.set_callback(handle_message)
+            client.connect()
+            apply_socket_timeout()
+            client.subscribe(TOPIC_CMD, qos=1)
+            client.subscribe(TOPIC_REQ, qos=1)
+            publish_success_count = 0
+            publish_fail_count = 0
+            clear_failed_brokers()
+            publish_status(True, "mqtt_connected")
+            publish_hello()
+            note_mqtt_ok()
+            log("info", "mqtt connected")
+            blink_n(5)
+            return True
+
+        except Exception as exc:
+            print("MQTT connect err:", exc)
+            close_mqtt_client()
+            mark_broker_failed(current_broker)
+
+            if rediscover_mqtt_broker() and BROKER != current_broker:
+                print("🔁 새 Broker로 MQTT 연결 재시도:", BROKER)
+                continue
+
+            BROKER = ""
+            return False
+
+    return False
 
 def mqtt_reconnect_with_backoff():
     backoff = 0.5
@@ -699,4 +851,3 @@ def main():
             time.sleep(2)
 
 main()
-
