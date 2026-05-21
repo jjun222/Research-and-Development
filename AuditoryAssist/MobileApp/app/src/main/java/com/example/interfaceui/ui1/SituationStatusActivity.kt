@@ -13,6 +13,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.interfaceui.MqttHelper
 import com.example.interfaceui.R
 import com.example.interfaceui.broker.BrokerBootstrap
+import com.example.interfaceui.util.setupToolbarBack
 import org.json.JSONObject
 import java.util.LinkedHashMap
 import java.util.Locale
@@ -20,7 +21,6 @@ import kotlin.math.max
 
 class SituationStatusActivity : AppCompatActivity() {
 
-    // 서버 alltrue_window_ms = 15000과 맞춤
     private val DETECT_TTL_MS = 15000L
 
     data class Item(
@@ -88,6 +88,8 @@ class SituationStatusActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_situation_status)
 
+        setupToolbarBack()
+
         recycler = findViewById(R.id.recycler)
         recycler.layoutManager = LinearLayoutManager(this)
         recycler.adapter = adapterRv
@@ -136,7 +138,6 @@ class SituationStatusActivity : AppCompatActivity() {
     private fun initItems() {
         items.clear()
 
-        // 표시 항목
         items["ALL_TRUE"] = Item("ALL_TRUE", getString(R.string.sensor_all_true))
         items["AI_fire_alert"] = Item("AI_fire_alert", getString(R.string.sensor_ai_fire))
         items["shz/sensor"] = Item("shz/sensor", getString(R.string.sensor_shz))
@@ -145,7 +146,6 @@ class SituationStatusActivity : AppCompatActivity() {
         items["water_level/sensor"] = Item("water_level/sensor", getString(R.string.sensor_water))
         items["doorbell/sensor"] = Item("doorbell/sensor", getString(R.string.sensor_doorbell))
 
-        // 수신 전용 별칭
         items["gas/sensor"] = Item("gas/sensor", getString(R.string.sensor_mq5))
         items["co/sensor"] = Item("co/sensor", getString(R.string.sensor_mq7))
         items["flame/sensor"] = Item("flame/sensor", getString(R.string.sensor_shz))
@@ -155,25 +155,18 @@ class SituationStatusActivity : AppCompatActivity() {
 
     private fun subscribeTopics(helper: MqttHelper) {
         listOf(
-            // 표준
             "AI_fire_alert",
             "shz/sensor",
             "mq5/sensor",
             "mq7/sensor",
             "water_level/sensor",
             "doorbell/sensor",
-
-            // 별칭
             "gas/sensor",
             "co/sensor",
             "flame/sensor",
             "water-level/sensor",
             "AI_D_fire",
-
-            // 와일드카드
             "+/sensor",
-
-            // 서버 로그 스트림
             "interfaceui/logs/server/server",
             "interfaceui/logs/server/#"
         ).forEach { topic ->
@@ -181,7 +174,6 @@ class SituationStatusActivity : AppCompatActivity() {
         }
     }
 
-    // ── 센서 토픽 직접 처리 ─────────────────────────────
     private fun handleSensorMessage(topic: String, body: String) {
         val now = System.currentTimeMillis()
         val key = canonicalKey(topic) ?: return
@@ -205,7 +197,6 @@ class SituationStatusActivity : AppCompatActivity() {
         }
     }
 
-    // ── 서버 로그 파싱 ─────────────────────────────
     private fun handleServerLog(body: String) {
         val now = System.currentTimeMillis()
 
@@ -226,10 +217,10 @@ class SituationStatusActivity : AppCompatActivity() {
                 }
 
                 msg.contains("ALL-TRUE", ignoreCase = true) ||
-                        msg == "neopixel fire alert sent" && source.contains("all_true", ignoreCase = true) ||
-                        msg == "manual fire trigger received" ||
-                        sensorId == "all_true" ||
-                        sensorId == "manual_fire_test" -> {
+                    msg == "neopixel fire alert sent" && source.contains("all_true", ignoreCase = true) ||
+                    msg == "manual fire trigger received" ||
+                    sensorId == "all_true" ||
+                    sensorId == "manual_fire_test" -> {
                     items["ALL_TRUE"]?.let {
                         it.detected = true
                         it.ts = now
@@ -237,7 +228,7 @@ class SituationStatusActivity : AppCompatActivity() {
                 }
 
                 msg == "ALL-TRUE flags reset" ||
-                        msg == "reset_all received" -> {
+                    msg == "reset_all received" -> {
                     clearDetected()
                 }
             }
@@ -265,7 +256,6 @@ class SituationStatusActivity : AppCompatActivity() {
                 }
             }
         } catch (_: Exception) {
-            // ignore
         }
     }
 
@@ -276,7 +266,6 @@ class SituationStatusActivity : AppCompatActivity() {
         }
     }
 
-    // 센서ID → 표준 키 매핑
     private fun sensorIdToKey(id: String): String? = when (id.lowercase(Locale.getDefault())) {
         "shz_sensor_pico" -> "shz/sensor"
         "mq7_sensor_pico" -> "mq7/sensor"
@@ -287,26 +276,25 @@ class SituationStatusActivity : AppCompatActivity() {
         else -> null
     }
 
-    // 토픽 표준화
     private fun canonicalKey(raw: String): String? {
         val t = raw.lowercase(Locale.getDefault())
 
         return when {
             t.contains("ai_d_fire") ||
-                    t.contains("ai_fire_alert") ||
-                    t.contains("ai/fire") -> "AI_fire_alert"
+                t.contains("ai_fire_alert") ||
+                t.contains("ai/fire") -> "AI_fire_alert"
 
             t.contains("shz") ||
-                    t.contains("flame/sensor") -> "shz/sensor"
+                t.contains("flame/sensor") -> "shz/sensor"
 
             t == "gas/sensor" ||
-                    t.contains("mq5") -> "mq5/sensor"
+                t.contains("mq5") -> "mq5/sensor"
 
             t == "co/sensor" ||
-                    t.contains("mq7") -> "mq7/sensor"
+                t.contains("mq7") -> "mq7/sensor"
 
             t.contains("water-level") ||
-                    t.contains("water_level") -> "water_level/sensor"
+                t.contains("water_level") -> "water_level/sensor"
 
             t.contains("doorbell") -> "doorbell/sensor"
 
@@ -339,14 +327,6 @@ class SituationStatusActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 센서 이벤트 감지 여부 파싱
-     *
-     * 지원:
-     * - 텍스트: 1, true, on, detected, alert, 위험, 감지 등
-     * - 텍스트: 0, false, off, normal, clear, 정상 등
-     * - JSON event/status/value 기반
-     */
     private fun parseDetectedFlexible(body: String, key: String): Boolean {
         val t = body.trim()
         val lower = t.lowercase(Locale.getDefault())
@@ -397,9 +377,9 @@ class SituationStatusActivity : AppCompatActivity() {
             val event = j.optString("event", "").lowercase(Locale.getDefault())
 
             if (status.contains("정상") ||
-                status.contains("normal") ||
-                status.contains("clear") ||
-                status.contains("off")
+                status == "normal" ||
+                status == "clear" ||
+                status == "off"
             ) {
                 return false
             }
@@ -433,12 +413,12 @@ class SituationStatusActivity : AppCompatActivity() {
 
             val boolHit =
                 j.optBoolean("detected", false) ||
-                        j.optBoolean("alert", false) ||
-                        j.optBoolean("pressed", false) ||
-                        j.optBoolean("ring", false) ||
-                        j.optBoolean("bell", false) ||
-                        j.optBoolean("wet", false) ||
-                        j.optBoolean("overflow", false)
+                    j.optBoolean("alert", false) ||
+                    j.optBoolean("pressed", false) ||
+                    j.optBoolean("ring", false) ||
+                    j.optBoolean("bell", false) ||
+                    j.optBoolean("wet", false) ||
+                    j.optBoolean("overflow", false)
 
             val intHit = listOf(
                 "detected",
@@ -454,12 +434,12 @@ class SituationStatusActivity : AppCompatActivity() {
 
             val valueHit = if (j.has("value")) {
                 j.optDouble("value", 0.0) != 0.0 &&
-                        (
-                                key == "water_level/sensor" ||
-                                        key == "doorbell/sensor" ||
-                                        statusHit ||
-                                        eventHit
-                                )
+                    (
+                        key == "water_level/sensor" ||
+                            key == "doorbell/sensor" ||
+                            statusHit ||
+                            eventHit
+                        )
             } else {
                 false
             }
@@ -500,7 +480,6 @@ class SituationStatusActivity : AppCompatActivity() {
             }
         }
 
-    // ── RecyclerView Adapter ───────────────────────────
     inner class SituationAdapter : RecyclerView.Adapter<SituationAdapter.VH>() {
         private var data: List<Item> = emptyList()
 
@@ -546,7 +525,7 @@ class SituationStatusActivity : AppCompatActivity() {
 
                 override fun areContentsTheSame(o: Int, n: Int) =
                     old[o].detected == newData[n].detected &&
-                            old[o].label == newData[n].label
+                        old[o].label == newData[n].label
             }).dispatchUpdatesTo(this)
         }
     }
