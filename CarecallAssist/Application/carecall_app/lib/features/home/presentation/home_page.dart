@@ -7,9 +7,69 @@ import '../../../store/alert_store.dart';
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
+  static const String _developerPassword = '1234';
+
   String _formatTime(DateTime time) {
     return '${time.year}-${time.month.toString().padLeft(2, '0')}-${time.day.toString().padLeft(2, '0')} '
         '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _openDeveloperTools(BuildContext context) async {
+    final controller = TextEditingController();
+
+    final allowed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('개발자 화면 접근'),
+          content: TextField(
+            controller: controller,
+            obscureText: true,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: '개발자 비밀번호',
+              hintText: '1234',
+              border: OutlineInputBorder(),
+            ),
+            onSubmitted: (_) {
+              Navigator.pop(
+                dialogContext,
+                controller.text.trim() == _developerPassword,
+              );
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('취소'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(
+                  dialogContext,
+                  controller.text.trim() == _developerPassword,
+                );
+              },
+              child: const Text('확인'),
+            ),
+          ],
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (!context.mounted) return;
+
+    if (allowed == true) {
+      Navigator.pushNamed(context, '/developer-tools');
+    } else if (allowed == false) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('개발자 비밀번호가 올바르지 않습니다.'),
+        ),
+      );
+    }
   }
 
   @override
@@ -21,10 +81,18 @@ class HomePage extends StatelessWidget {
         title: const Text('CareCall 보호자 앱'),
         actions: [
           IconButton(
+            tooltip: '일반 설정',
             onPressed: () {
               Navigator.pushNamed(context, '/settings');
             },
-            icon: const Icon(Icons.settings),
+            icon: const Icon(Icons.settings_outlined),
+          ),
+          IconButton(
+            tooltip: '개발자 설정',
+            onPressed: () {
+              _openDeveloperTools(context);
+            },
+            icon: const Icon(Icons.settings_applications_outlined),
           ),
         ],
       ),
@@ -38,10 +106,8 @@ class HomePage extends StatelessWidget {
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                if (store.isLoading)
-                  const LinearProgressIndicator(),
-                if (store.isLoading)
-                  const SizedBox(height: 12),
+                if (store.isLoading) const LinearProgressIndicator(),
+                if (store.isLoading) const SizedBox(height: 12),
                 _StatusCard(
                   status: store.latestStatus,
                   unacknowledgedCount: store.unacknowledgedCount,
@@ -50,7 +116,8 @@ class HomePage extends StatelessWidget {
                 const SizedBox(height: 16),
                 _QuickActionGrid(
                   onHistory: () => Navigator.pushNamed(context, '/history'),
-                  onMonitoring: () => Navigator.pushNamed(context, '/monitoring'),
+                  onMonitoring: () =>
+                      Navigator.pushNamed(context, '/monitoring'),
                   onChat: () => Navigator.pushNamed(context, '/chat'),
                   onRefresh: store.refreshFromServer,
                 ),
@@ -110,18 +177,9 @@ class _StatusCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-            _StatusRow(
-              label: '현재 위치',
-              value: status.room,
-            ),
-            _StatusRow(
-              label: '행동 상태',
-              value: status.posture,
-            ),
-            _StatusRow(
-              label: '최근 이벤트',
-              value: status.lastEventType,
-            ),
+            _StatusRow(label: '현재 위치', value: status.room),
+            _StatusRow(label: '행동 상태', value: status.posture),
+            _StatusRow(label: '최근 이벤트', value: status.lastEventType),
             _StatusRow(
               label: '연결 상태',
               value: status.online ? '온라인' : '서버 연결 전',
@@ -175,9 +233,7 @@ class _StatusRow extends StatelessWidget {
               style: const TextStyle(fontWeight: FontWeight.w600),
             ),
           ),
-          Expanded(
-            child: Text(value),
-          ),
+          Expanded(child: Text(value)),
         ],
       ),
     );
