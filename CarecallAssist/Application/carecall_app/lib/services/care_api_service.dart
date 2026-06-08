@@ -12,16 +12,26 @@ class CareApiService {
 
   ApiClient get _client => ApiClient(baseUrl: AppConfig.apiBaseUrl);
 
+  Future<bool> healthCheck() async {
+    try {
+      await _client.getJson('/health');
+      return true;
+    } catch (error) {
+      debugPrint('서버 연결 확인 실패: $error');
+      return false;
+    }
+  }
+
   Future<LatestStatus?> fetchLatestStatus() async {
     try {
       final data = await _client.getJson('/status/latest');
 
-      if (data is Map<String, dynamic>) {
-        return LatestStatus.fromJson(data);
+      if (data is Map && data['status'] is Map) {
+        return LatestStatus.fromJson(data['status'] as Map);
       }
 
-      if (data is Map && data['status'] is Map<String, dynamic>) {
-        return LatestStatus.fromJson(data['status'] as Map<String, dynamic>);
+      if (data is Map) {
+        return LatestStatus.fromJson(data);
       }
     } catch (error) {
       debugPrint('최신 상태 조회 실패: $error');
@@ -36,14 +46,14 @@ class CareApiService {
 
       if (data is List) {
         return data
-            .whereType<Map<String, dynamic>>()
+            .whereType<Map>()
             .map(AlertEvent.fromJson)
             .toList();
       }
 
       if (data is Map && data['events'] is List) {
         return (data['events'] as List)
-            .whereType<Map<String, dynamic>>()
+            .whereType<Map>()
             .map(AlertEvent.fromJson)
             .toList();
       }
@@ -63,6 +73,7 @@ class CareApiService {
           'guardian_id': AppConfig.guardianId,
         },
       );
+
       return true;
     } catch (error) {
       debugPrint('이벤트 확인 처리 서버 전송 실패: $error');
@@ -84,6 +95,7 @@ class CareApiService {
           'fcm_token': token,
         },
       );
+
       return true;
     } catch (error) {
       debugPrint('FCM 토큰 서버 등록 실패: $error');
@@ -102,8 +114,9 @@ class CareApiService {
         },
       );
 
-      if (data is Map<String, dynamic>) {
+      if (data is Map) {
         final answer = data['answer'] ?? data['message'] ?? data['response'];
+
         if (answer != null && answer.toString().trim().isNotEmpty) {
           return answer.toString();
         }
