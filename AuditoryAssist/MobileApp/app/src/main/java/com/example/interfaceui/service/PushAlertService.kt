@@ -23,6 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import com.example.interfaceui.util.AlertNotificationVisuals
 
 class PushAlertService : FirebaseMessagingService() {
 
@@ -67,6 +68,12 @@ class PushAlertService : FirebaseMessagingService() {
         val receivedAt = data["timestamp_ms"]?.toLongOrNull()
             ?: System.currentTimeMillis()
 
+        val type = AlertNotificationVisuals.resolveType(
+            explicitType = data["type"] ?: data["alert_type"] ?: data["event"],
+            title = title,
+            body = body
+        )
+
         ioScope.launch {
             runCatching {
                 val dao = AppDatabase.getDatabase(applicationContext).notificationDao()
@@ -85,7 +92,7 @@ class PushAlertService : FirebaseMessagingService() {
             }
         }
 
-        showLocalNotification(title, body)
+        showLocalNotification(title, body, type)
     }
 
     private fun createNotificationChannel() {
@@ -103,12 +110,12 @@ class PushAlertService : FirebaseMessagingService() {
         }
     }
 
-    private fun showLocalNotification(title: String, body: String) {
-        // Android 13+ 알림 권한 체크
+    private fun showLocalNotification(title: String, body: String, type: String) {
         if (Build.VERSION.SDK_INT >= 33) {
             val granted = ContextCompat.checkSelfPermission(
                 this, android.Manifest.permission.POST_NOTIFICATIONS
             ) == PackageManager.PERMISSION_GRANTED
+
             if (!granted) {
                 Log.w(TAG, "알림 권한 없음 → 로컬 알림 생략")
                 return
@@ -118,14 +125,17 @@ class PushAlertService : FirebaseMessagingService() {
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
+
         val piFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         else
             PendingIntent.FLAG_UPDATE_CURRENT
+
         val pendingIntent = PendingIntent.getActivity(this, 0, intent, piFlags)
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setSmallIcon(AlertNotificationVisuals.smallIconRes())
+            .setLargeIcon(AlertNotificationVisuals.largeIconBitmap(this, type))
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
