@@ -1,0 +1,47 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <!-- Door body -->
+    <path
+        android:fillColor="#00A83A"
+        android:pathData="M13,6 L35,6 C37.2,6 39,7.8 39,10 L39,42 L9,42 L9,10 C9,7.8 10.8,6 13,6 Z" />
+
+    <!-- Door inner -->
+    <path
+        android:fillColor="#00FD05"
+        android:pathData="M15,10 L32,10 C33.1,10 34,10.9 34,12 L34,42 L15,42 Z" />
+
+    <!-- Door knob -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M29,26 C30.1,26 31,26.9 31,28 C31,29.1 30.1,30 29,30 C27.9,30 27,29.1 27,28 C27,26.9 27.9,26 29,26 Z" />
+
+    <!-- Bell top -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,13 C20.7,13 18,15.7 18,19 L18,24 L15,28 L33,28 L30,24 L30,19 C30,15.7 27.3,13 24,13 Z" />
+
+    <!-- Bell clapper -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M21,30 C21.4,31.7 22.6,33 24,33 C25.4,33 26.6,31.7 27,30 Z" />
+
+    <!-- Ring lines -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M13,18 C11.5,20 11.5,23 13,25" />
+
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M35,18 C36.5,20 36.5,23 35,25" />
+
+</vector>
