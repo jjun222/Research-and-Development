@@ -1,0 +1,45 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <!-- Background circle -->
+    <path
+        android:fillColor="#8300FD"
+        android:pathData="M24,4 C13,4 4,13 4,24 C4,35 13,44 24,44 C35,44 44,35 44,24 C44,13 35,4 24,4 Z" />
+
+    <!-- CO molecule connector -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M18,24 L30,24" />
+
+    <!-- Carbon atom -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M16,16 C11.6,16 8,19.6 8,24 C8,28.4 11.6,32 16,32 C20.4,32 24,28.4 24,24 C24,19.6 20.4,16 16,16 Z" />
+
+    <!-- Oxygen atom -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M32,16 C27.6,16 24,19.6 24,24 C24,28.4 27.6,32 32,32 C36.4,32 40,28.4 40,24 C40,19.6 36.4,16 32,16 Z" />
+
+    <!-- Inner cut for carbon -->
+    <path
+        android:fillColor="#8300FD"
+        android:pathData="M16,20 C13.8,20 12,21.8 12,24 C12,26.2 13.8,28 16,28 C18.2,28 20,26.2 20,24 C20,21.8 18.2,20 16,20 Z" />
+
+    <!-- Inner cut for oxygen -->
+    <path
+        android:fillColor="#8300FD"
+        android:pathData="M32,20 C29.8,20 28,21.8 28,24 C28,26.2 29.8,28 32,28 C34.2,28 36,26.2 36,24 C36,21.8 34.2,20 32,20 Z" />
+
+    <!-- Warning dot -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,35 C25.1,35 26,35.9 26,37 C26,38.1 25.1,39 24,39 C22.9,39 22,38.1 22,37 C22,35.9 22.9,35 24,35 Z" />
+
+</vector>
