@@ -50,7 +50,7 @@ object AlertNotificationVisuals {
 
     fun largeIconRes(type: String): Int {
         return when (type) {
-            "fire_confirmed", "fire_alert" -> R.drawable.ic_alert_fire
+            "fire_confirmed", "fire_alert" -> R.drawable.ic_fire_alert
             "ai_fire" -> R.drawable.ic_alert_ai_fire
             "flame" -> R.drawable.ic_alert_flame
             "gas" -> R.drawable.ic_alert_gas
