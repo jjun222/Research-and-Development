@@ -14,7 +14,8 @@
         android:layout_height="?attr/actionBarSize"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
-        app:title="@string/app_name" />
+        app:title="@string/app_name"
+        app:menu="@menu/menu_main_developer" />
 
     <!-- 본문 -->
     <ScrollView
