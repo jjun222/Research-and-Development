@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <item
+        android:id="@+id/menuDeveloperMode"
+        android:icon="@drawable/ic_developer_mode_24"
+        android:title="개발자 모드"
+        app:showAsAction="always" />
+
+</menu>
