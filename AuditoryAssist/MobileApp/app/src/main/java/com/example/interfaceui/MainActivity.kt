@@ -28,6 +28,11 @@ import com.example.interfaceui.ui1.SituationStatusActivity
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import android.text.InputType
+import android.widget.EditText
+import android.widget.Toast
+import com.google.android.material.appbar.MaterialToolbar
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 
 class MainActivity : AppCompatActivity() {
     private lateinit var tvMqttStatus: TextView
@@ -69,6 +74,7 @@ class MainActivity : AppCompatActivity() {
         tvAlertMode = findViewById(R.id.tvAlertMode)
         tvLastReceived = findViewById(R.id.tvLastReceived)
 
+        bindDeveloperModeToolbar()
         bindMenuButtons()
         requestPostNotificationIfNeeded()
         showInitialStatus()
@@ -127,6 +133,68 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, WifiSettingsActivity::class.java))
         }
     }
+
+    private fun bindDeveloperModeToolbar() {
+        val toolbar = findViewById<MaterialToolbar>(R.id.toolbar)
+
+        toolbar.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                R.id.menuDeveloperMode -> {
+                    showDeveloperPasswordDialog()
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun showDeveloperPasswordDialog() {
+        val passwordInput = EditText(this).apply {
+            hint = "비밀번호 입력"
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            setSingleLine(true)
+            setPadding(48, 24, 48, 24)
+        }
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle("개발자 모드")
+            .setMessage("개발자 모드 비밀번호를 입력하세요.")
+            .setView(passwordInput)
+            .setNegativeButton("취소", null)
+            .setPositiveButton("확인") { _, _ ->
+                val password = passwordInput.text.toString().trim()
+
+                if (password == DEVELOPER_MODE_PASSWORD) {
+                    showDeveloperModeMenu()
+                } else {
+                    Toast.makeText(this, "비밀번호가 올바르지 않습니다.", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .show()
+    }
+
+    private fun showDeveloperModeMenu() {
+        val menuItems = arrayOf(
+            "기기 로그",
+            "MQTT / Wi-Fi 설정",
+            "기기 등록 및 삭제",
+            "상태 확인"
+        )
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle("개발자 모드")
+            .setItems(menuItems) { _, which ->
+                when (which) {
+                    0 -> startActivity(Intent(this, LogActivity::class.java))
+                    1 -> startActivity(Intent(this, WifiSettingsActivity::class.java))
+                    2 -> startActivity(Intent(this, DeviceSelectActivity::class.java))
+                    3 -> startActivity(Intent(this, SituationStatusActivity::class.java))
+                }
+            }
+            .setNegativeButton("닫기", null)
+            .show()
+    }
+
 
     private fun showInitialStatus() {
         tvMqttStatus.text = "MQTT 상태: 연결 준비 중"
@@ -226,15 +294,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun shouldUpdateLastReceived(topic: String): Boolean {
         return topic.startsWith("alerts/") ||
-            topic.startsWith("interfaceui/registry/hello/") ||
-            topic == "interfaceui/status/server" ||
-            topic == "interfaceui/status/publisher/AI_D_fire" ||
-            topic == "shz/sensor" ||
-            topic == "mq7/sensor" ||
-            topic == "gas/sensor" ||
-            topic == "AI_fire_alert" ||
-            topic == "water_level/sensor" ||
-            topic == "doorbell/sensor"
+                topic.startsWith("interfaceui/registry/hello/") ||
+                topic == "interfaceui/status/server" ||
+                topic == "interfaceui/status/publisher/AI_D_fire" ||
+                topic == "shz/sensor" ||
+                topic == "mq7/sensor" ||
+                topic == "gas/sensor" ||
+                topic == "AI_fire_alert" ||
+                topic == "water_level/sensor" ||
+                topic == "doorbell/sensor"
     }
 
     private fun buildAlertModeText(): String {
@@ -260,10 +328,14 @@ class MainActivity : AppCompatActivity() {
         val capabilities = cm.getNetworkCapabilities(network) ?: return false
 
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
     private fun nowText(): String {
         return SimpleDateFormat("HH:mm:ss", Locale.KOREA).format(Date())
+    }
+
+    companion object {
+        private const val DEVELOPER_MODE_PASSWORD = "1234"
     }
 }
