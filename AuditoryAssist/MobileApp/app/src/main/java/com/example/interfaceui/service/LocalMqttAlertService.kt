@@ -28,6 +28,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import kotlin.math.abs
+import com.example.interfaceui.util.AlertNotificationVisuals
 
 class LocalMqttAlertService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -180,16 +181,16 @@ class LocalMqttAlertService : Service() {
 
     private fun isAlertTopic(topic: String): Boolean {
         return topic.startsWith("alerts/") ||
-            topic == "shz/sensor" ||
-            topic == "mq7/sensor" ||
-            topic == "gas/sensor" ||
-            topic == "AI_fire_alert" ||
-            topic == "water_level/sensor" ||
-            topic == "doorbell/sensor" ||
-            topic == "mq5/sensor" ||
-            topic == "co/sensor" ||
-            topic == "flame/sensor" ||
-            topic == "AI_D_fire"
+                topic == "shz/sensor" ||
+                topic == "mq7/sensor" ||
+                topic == "gas/sensor" ||
+                topic == "AI_fire_alert" ||
+                topic == "water_level/sensor" ||
+                topic == "doorbell/sensor" ||
+                topic == "mq5/sensor" ||
+                topic == "co/sensor" ||
+                topic == "flame/sensor" ||
+                topic == "AI_D_fire"
     }
 
     private fun handleAlertMessage(topic: String, payload: String) {
@@ -216,7 +217,7 @@ class LocalMqttAlertService : Service() {
                 )
         }
 
-        showSystemNotification(parsed.title, parsed.body)
+        showSystemNotification(parsed.title, parsed.body, parsed.type)
 
         val serverConfirmedAllTrue =
             isAllTrueFireAlert(topic, payload) && isFreshEmergencyPayload(payload)
@@ -340,8 +341,8 @@ class LocalMqttAlertService : Service() {
         if (value.contains("정상") && !value.contains("비정상")) return true
 
         return value == "status_normal" ||
-            value == "normal_report" ||
-            value == "normal_state"
+                value == "normal_report" ||
+                value == "normal_state"
     }
 
     private fun isDetectedPayload(topic: String, json: JSONObject): Boolean {
@@ -655,9 +656,9 @@ class LocalMqttAlertService : Service() {
 
         val textHit =
             lowerText.contains("all_true") ||
-                lowerText.contains("all-true") ||
-                lowerText.contains("fire_confirmed") ||
-                lowerText.contains("manual_fire_test")
+                    lowerText.contains("all-true") ||
+                    lowerText.contains("fire_confirmed") ||
+                    lowerText.contains("manual_fire_test")
 
         if (textHit && topic.startsWith("alerts/")) {
             return true
@@ -675,18 +676,18 @@ class LocalMqttAlertService : Service() {
             val msg = json.optString("msg", "").lowercase()
 
             command == "fire_confirmed" ||
-                command == "all_true" ||
-                command == "fire_test" ||
-                type == "fire_confirmed" ||
-                type == "all_true" ||
-                event == "fire_confirmed" ||
-                event == "all_true" ||
-                source == "all_true" ||
-                sensorId == "all_true" ||
-                sensorId == "manual_fire_test" ||
-                reason.contains("all_true") ||
-                msg.contains("all-true") ||
-                msg.contains("all_true")
+                    command == "all_true" ||
+                    command == "fire_test" ||
+                    type == "fire_confirmed" ||
+                    type == "all_true" ||
+                    event == "fire_confirmed" ||
+                    event == "all_true" ||
+                    source == "all_true" ||
+                    sensorId == "all_true" ||
+                    sensorId == "manual_fire_test" ||
+                    reason.contains("all_true") ||
+                    msg.contains("all-true") ||
+                    msg.contains("all_true")
         } catch (_: Exception) {
             false
         }
@@ -734,7 +735,7 @@ class LocalMqttAlertService : Service() {
                 )
         }
 
-        showEmergencyNotification(title, body)
+        showEmergencyNotification(title, body, "fire_confirmed")
     }
 
     private fun titleForType(type: String): String {
@@ -805,7 +806,7 @@ class LocalMqttAlertService : Service() {
         .setOngoing(true)
         .build()
 
-    private fun showSystemNotification(title: String, body: String) {
+    private fun showSystemNotification(title: String, body: String, type: String) {
         if (!canPostNotification()) return
 
         val intent = Intent(this, MainActivity::class.java)
@@ -817,7 +818,8 @@ class LocalMqttAlertService : Service() {
         )
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ALERT)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(AlertNotificationVisuals.smallIconRes())
+            .setLargeIcon(AlertNotificationVisuals.largeIconBitmap(this, type))
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
@@ -830,7 +832,7 @@ class LocalMqttAlertService : Service() {
         manager.notify(System.currentTimeMillis().toInt(), notification)
     }
 
-    private fun showEmergencyNotification(title: String, body: String) {
+    private fun showEmergencyNotification(title: String, body: String, type: String = "fire_confirmed") {
         if (!canPostNotification()) return
 
         val intent = Intent(this, EmergencyAlertActivity::class.java).apply {
@@ -847,7 +849,8 @@ class LocalMqttAlertService : Service() {
         )
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ALERT)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(AlertNotificationVisuals.smallIconRes())
+            .setLargeIcon(AlertNotificationVisuals.largeIconBitmap(this, type))
             .setContentTitle("긴급: $title")
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
