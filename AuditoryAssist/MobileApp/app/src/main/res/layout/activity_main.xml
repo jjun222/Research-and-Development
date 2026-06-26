@@ -85,6 +85,7 @@
                 style="?attr/materialButtonStyle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:visibility="gone"
                 android:text="@string/menu_situation_status" />
 
             <!-- 기기 점검 -->
@@ -103,6 +104,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
+                android:visibility="gone"
                 android:text="@string/go_log" />
 
             <!-- 설정 -->
@@ -130,6 +132,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
+                android:visibility="gone"
                 android:text="@string/go_device" />
 
             <!-- 푸시 알림 기록 -->
@@ -148,6 +151,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
+                android:visibility="gone"
                 android:text="MQTT / Wi-Fi 설정" />
 
         </LinearLayout>
