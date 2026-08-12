@@ -2,8 +2,15 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+
+from groq_service import (
+    CareCallChatConfigurationError,
+    CareCallChatRateLimitError,
+    CareCallChatUnavailableError,
+    generate_carecall_answer,
+)
 
 app = FastAPI(title="CareCall Mock API", version="0.1.0")
 
@@ -153,21 +160,22 @@ def register_fcm_token(request: FcmTokenRequest):
 def chat(request: ChatRequest):
     question = request.question.strip()
 
-    if "어디" in question or "위치" in question:
-        answer = f"현재 보호 대상자는 {latest_status['room']}에 있는 것으로 기록되어 있습니다."
-    elif "충격" in question:
-        answer = "현재 Mock 데이터 기준으로 최근 충격 발생 정보는 없습니다."
-    elif "상태" in question or "자세" in question:
-        answer = (
-            f"현재 행동 상태는 {latest_status['posture']}이고, "
-            f"낙상 위험도는 {latest_status['fall_risk']}로 기록되어 있습니다."
+    if not question:
+        raise HTTPException(status_code=422, detail="질문을 입력해 주세요.")
+
+    try:
+        answer = generate_carecall_answer(
+            question=question,
+            user_id=request.user_id,
+            latest_status=latest_status,
+            events=events,
         )
-    else:
-        answer = (
-            f"현재 보호 대상자는 {latest_status['room']}에 있으며, "
-            f"행동 상태는 {latest_status['posture']}입니다. "
-            f"낙상 위험도는 {latest_status['fall_risk']}입니다."
-        )
+    except CareCallChatRateLimitError as error:
+        raise HTTPException(status_code=429, detail=str(error)) from error
+    except CareCallChatConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except CareCallChatUnavailableError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
     return {
         "answer": answer,
