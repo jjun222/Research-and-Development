@@ -2,15 +2,27 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
+from database import SessionLocal, get_db, init_db
 from groq_service import (
     CareCallChatConfigurationError,
     CareCallChatRateLimitError,
     CareCallChatUnavailableError,
     generate_carecall_answer,
 )
+from repositories import (
+    acknowledge_event as acknowledge_event_in_db,
+    create_event,
+    get_latest_status as get_latest_status_from_db,
+    list_events,
+    save_latest_status,
+    upsert_fcm_token,
+)
+from seed import seed_database
+
 
 app = FastAPI(title="CareCall Mock API", version="0.1.0")
 
@@ -19,42 +31,14 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat()
 
 
-latest_status = {
-    "user_id": "user_01",
-    "room": "거실",
-    "posture": "sitting",
-    "motion_state": "stable",
-    "fall_risk": "low",
-    "last_event_type": "none",
-    "body_part": None,
-    "last_impact_at": None,
-    "updated_at": now_iso(),
-    "camera_stream_url": "",
-    "snapshot_url": "",
-    "online": True,
-}
+def initialize_database() -> None:
+    init_db()
 
-events = [
-    {
-        "event_id": "event_001",
-        "user_id": "user_01",
-        "title": "도움 요청 테스트",
-        "body": "거실 호출 버튼이 눌렸습니다.",
-        "location": "거실",
-        "device_id": "button_livingroom_01",
-        "event_type": "help_request",
-        "severity": "warning",
-        "body_part": None,
-        "posture": None,
-        "confidence": None,
-        "image_url": None,
-        "stream_url": None,
-        "occurred_at": now_iso(),
-        "acknowledged": False,
-    }
-]
+    with SessionLocal() as db:
+        seed_database(db)
 
-fcm_tokens = []
+
+initialize_database()
 
 
 class AckRequest(BaseModel):
@@ -99,53 +83,61 @@ def health_check():
 
 
 @app.get("/api/v1/status/latest")
-def get_latest_status():
-    return latest_status
+def get_latest_status(db: Session = Depends(get_db)):
+    status = get_latest_status_from_db(db)
+
+    if status is None:
+        raise HTTPException(status_code=404, detail="최신 상태를 찾을 수 없습니다.")
+
+    return status
 
 
 @app.get("/api/v1/events")
-def get_events():
-    return {
-        "events": sorted(
-            events,
-            key=lambda item: item["occurred_at"],
-            reverse=True,
-        )
-    }
+def get_events(db: Session = Depends(get_db)):
+    return {"events": list_events(db)}
 
 
 @app.patch("/api/v1/events/{event_id}/ack")
-def acknowledge_event(event_id: str, request: AckRequest):
-    for event in events:
-        if event["event_id"] == event_id:
-            event["acknowledged"] = request.acknowledged
-            event["acknowledged_by"] = request.guardian_id
-            event["acknowledged_at"] = now_iso()
+def acknowledge_event(
+    event_id: str,
+    request: AckRequest,
+    db: Session = Depends(get_db),
+):
+    acknowledged_at = now_iso()
+    event = acknowledge_event_in_db(
+        db,
+        event_id=event_id,
+        guardian_id=request.guardian_id,
+        acknowledged=request.acknowledged,
+        acknowledged_at=acknowledged_at,
+    )
 
-            return {
-                "event_id": event_id,
-                "acknowledged": event["acknowledged"],
-                "acknowledged_by": request.guardian_id,
-                "acknowledged_at": event["acknowledged_at"],
-            }
+    if event is None:
+        raise HTTPException(
+            status_code=404,
+            detail="해당 이벤트를 찾을 수 없습니다.",
+        )
 
     return {
         "event_id": event_id,
-        "acknowledged": False,
-        "message": "해당 이벤트를 찾을 수 없습니다.",
+        "acknowledged": event["acknowledged"],
+        "acknowledged_by": event["acknowledged_by"],
+        "acknowledged_at": event["acknowledged_at"],
     }
 
 
 @app.post("/api/v1/devices/fcm-token")
-def register_fcm_token(request: FcmTokenRequest):
-    fcm_tokens.append(
-        {
-            "guardian_id": request.guardian_id,
-            "user_id": request.user_id,
-            "platform": request.platform,
-            "fcm_token": request.fcm_token,
-            "registered_at": now_iso(),
-        }
+def register_fcm_token(
+    request: FcmTokenRequest,
+    db: Session = Depends(get_db),
+):
+    upsert_fcm_token(
+        db,
+        guardian_id=request.guardian_id,
+        user_id=request.user_id,
+        platform=request.platform,
+        fcm_token=request.fcm_token,
+        now=now_iso(),
     )
 
     return {
@@ -157,11 +149,14 @@ def register_fcm_token(request: FcmTokenRequest):
 
 
 @app.post("/api/v1/chat")
-def chat(request: ChatRequest):
+def chat(request: ChatRequest, db: Session = Depends(get_db)):
     question = request.question.strip()
 
     if not question:
         raise HTTPException(status_code=422, detail="질문을 입력해 주세요.")
+
+    latest_status = get_latest_status_from_db(db, user_id=request.user_id) or {}
+    events = list_events(db, user_id=request.user_id)
 
     try:
         answer = generate_carecall_answer(
@@ -177,16 +172,19 @@ def chat(request: ChatRequest):
     except CareCallChatUnavailableError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
-    return {
-        "answer": answer,
-    }
+    return {"answer": answer}
 
 
 @app.post("/api/v1/edge/motion")
-def receive_edge_motion(request: EdgeMotionRequest):
+def receive_edge_motion(
+    request: EdgeMotionRequest,
+    db: Session = Depends(get_db),
+):
     occurred_at = request.occurred_at or now_iso()
+    previous_status = get_latest_status_from_db(db, user_id=request.user_id) or {}
 
-    latest_status.update(
+    save_latest_status(
+        db,
         {
             "user_id": request.user_id,
             "room": request.room,
@@ -194,20 +192,21 @@ def receive_edge_motion(request: EdgeMotionRequest):
             "motion_state": request.motion_state,
             "fall_risk": request.fall_risk,
             "last_event_type": "posture_updated",
+            "body_part": previous_status.get("body_part"),
+            "last_impact_at": previous_status.get("last_impact_at"),
             "updated_at": occurred_at,
             "camera_stream_url": request.stream_url or "",
             "snapshot_url": request.snapshot_url or "",
             "online": True,
-        }
+        },
     )
 
     event_created = False
 
     if request.fall_risk == "high" or request.posture == "fallen":
         event_created = True
-
-        events.insert(
-            0,
+        create_event(
+            db,
             {
                 "event_id": f"event_{uuid4().hex[:8]}",
                 "user_id": request.user_id,
@@ -235,30 +234,46 @@ def receive_edge_motion(request: EdgeMotionRequest):
 
 
 @app.post("/api/v1/dev/test/help-request")
-def create_test_help_request():
-    event = {
-        "event_id": f"event_{uuid4().hex[:8]}",
-        "user_id": "user_01",
-        "title": "도움 요청",
-        "body": "개발자 테스트로 생성한 도움 요청 이벤트입니다.",
-        "location": "거실",
-        "device_id": "dev_tool",
-        "event_type": "help_request",
-        "severity": "warning",
-        "body_part": None,
-        "posture": None,
-        "confidence": None,
-        "image_url": None,
-        "stream_url": None,
-        "occurred_at": now_iso(),
-        "acknowledged": False,
-    }
+def create_test_help_request(db: Session = Depends(get_db)):
+    occurred_at = now_iso()
+    event = create_event(
+        db,
+        {
+            "event_id": f"event_{uuid4().hex[:8]}",
+            "user_id": "user_01",
+            "title": "도움 요청",
+            "body": "개발자 테스트로 생성한 도움 요청 이벤트입니다.",
+            "location": "거실",
+            "device_id": "dev_tool",
+            "event_type": "help_request",
+            "severity": "warning",
+            "body_part": None,
+            "posture": None,
+            "confidence": None,
+            "image_url": None,
+            "stream_url": None,
+            "occurred_at": occurred_at,
+            "acknowledged": False,
+        },
+    )
 
-    events.insert(0, event)
-    latest_status["last_event_type"] = "help_request"
-    latest_status["updated_at"] = event["occurred_at"]
+    previous_status = get_latest_status_from_db(db, user_id="user_01") or {}
+    save_latest_status(
+        db,
+        {
+            "user_id": "user_01",
+            "room": previous_status.get("room", "거실"),
+            "posture": previous_status.get("posture", "unknown"),
+            "motion_state": previous_status.get("motion_state", "unknown"),
+            "fall_risk": previous_status.get("fall_risk", "unknown"),
+            "last_event_type": "help_request",
+            "body_part": previous_status.get("body_part"),
+            "last_impact_at": previous_status.get("last_impact_at"),
+            "updated_at": occurred_at,
+            "camera_stream_url": previous_status.get("camera_stream_url", ""),
+            "snapshot_url": previous_status.get("snapshot_url", ""),
+            "online": previous_status.get("online", True),
+        },
+    )
 
-    return {
-        "created": True,
-        "event": event,
-    }
+    return {"created": True, "event": event}
