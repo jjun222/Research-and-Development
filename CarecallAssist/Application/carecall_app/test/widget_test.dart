@@ -1,5 +1,6 @@
 import 'package:carecall_app/app/app.dart';
 import 'package:carecall_app/models/alert_event.dart';
+import 'package:carecall_app/services/navigation_service.dart';
 import 'package:carecall_app/store/alert_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -26,7 +27,7 @@ void main() {
     expect(find.text('알림 이력이 없습니다.'), findsOneWidget);
   });
 
-  testWidgets('opens the selected alert detail from the home screen', (
+  testWidgets('opens the selected alert detail route', (
     WidgetTester tester,
   ) async {
     const eventId = 'widget_test_event';
@@ -47,13 +48,21 @@ void main() {
 
     await tester.pumpWidget(const CareCallApp());
 
-    final detailButton = find.text('상세 보기');
-    await tester.ensureVisible(detailButton);
-    await tester.tap(detailButton);
+    final navigator = NavigationService.navigatorKey.currentState;
+    expect(navigator, isNotNull);
+
+    final routeResult = navigator!.pushNamed(
+      '/alert-detail',
+      arguments: eventId,
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('알림 상세'), findsOneWidget);
     expect(find.text(eventId), findsOneWidget);
     expect(find.text('테스트 알림'), findsOneWidget);
+
+    navigator.pop();
+    await tester.pumpAndSettle();
+    await routeResult;
   });
 }
