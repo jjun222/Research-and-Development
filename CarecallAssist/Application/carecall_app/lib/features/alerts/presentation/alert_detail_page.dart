@@ -2,13 +2,20 @@ import 'package:flutter/material.dart';
 
 import '../../../store/alert_store.dart';
 
-class AlertDetailPage extends StatelessWidget {
+class AlertDetailPage extends StatefulWidget {
   final String? eventId;
 
   const AlertDetailPage({
     super.key,
     required this.eventId,
   });
+
+  @override
+  State<AlertDetailPage> createState() => _AlertDetailPageState();
+}
+
+class _AlertDetailPageState extends State<AlertDetailPage> {
+  bool _submitting = false;
 
   String _formatTime(DateTime time) {
     return '${time.year}-${time.month.toString().padLeft(2, '0')}-${time.day.toString().padLeft(2, '0')} '
@@ -26,7 +33,9 @@ class AlertDetailPage extends StatelessWidget {
       body: AnimatedBuilder(
         animation: store,
         builder: (context, _) {
-          final alert = eventId == null ? null : store.findById(eventId!);
+          final alert = widget.eventId == null
+              ? null
+              : store.findById(widget.eventId!);
 
           if (alert == null) {
             return const Center(
@@ -126,21 +135,41 @@ class AlertDetailPage extends StatelessWidget {
               ],
               const SizedBox(height: 20),
               ElevatedButton.icon(
-                onPressed: alert.acknowledged
+                onPressed: alert.acknowledged || _submitting
                     ? null
                     : () async {
-                        await store.acknowledge(alert.id);
+                        setState(() {
+                          _submitting = true;
+                        });
+
+                        final acknowledged =
+                            await store.acknowledge(alert.id);
 
                         if (!context.mounted) return;
 
+                        if (acknowledged) {
+                          Navigator.pop(context, true);
+                          return;
+                        }
+
+                        setState(() {
+                          _submitting = false;
+                        });
+
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text('알림을 확인 처리했습니다.'),
+                            content: Text('알림 확인 처리에 실패했습니다.'),
                           ),
                         );
                       },
-                icon: const Icon(Icons.check),
-                label: const Text('확인했습니다'),
+                icon: _submitting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.check),
+                label: Text(_submitting ? '처리 중...' : '확인했습니다'),
               ),
             ],
           );
