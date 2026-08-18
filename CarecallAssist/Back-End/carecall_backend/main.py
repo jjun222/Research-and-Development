@@ -183,6 +183,16 @@ def receive_edge_motion(
     occurred_at = request.occurred_at or now_iso()
     previous_status = get_latest_status_from_db(db, user_id=request.user_id) or {}
 
+    previous_was_fall = (
+        previous_status.get("fall_risk") == "high"
+        or previous_status.get("posture") == "fallen"
+    )
+
+    current_is_fall = (
+        request.fall_risk == "high"
+        or request.posture == "fallen"
+    )
+
     save_latest_status(
         db,
         {
@@ -203,7 +213,7 @@ def receive_edge_motion(
 
     event_created = False
 
-    if request.fall_risk == "high" or request.posture == "fallen":
+    if current_is_fall and not previous_was_fall:
         event_created = True
         create_event(
             db,
@@ -236,6 +246,7 @@ def receive_edge_motion(
 @app.post("/api/v1/dev/test/help-request")
 def create_test_help_request(db: Session = Depends(get_db)):
     occurred_at = now_iso()
+
     event = create_event(
         db,
         {
@@ -258,6 +269,7 @@ def create_test_help_request(db: Session = Depends(get_db)):
     )
 
     previous_status = get_latest_status_from_db(db, user_id="user_01") or {}
+
     save_latest_status(
         db,
         {
