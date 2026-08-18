@@ -5,3 +5,4 @@ groq
 pytest
 httpx2
 sqlalchemy>=2.0,<2.1
+firebase-admin==7.5.0
