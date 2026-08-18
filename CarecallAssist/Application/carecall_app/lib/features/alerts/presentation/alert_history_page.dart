@@ -66,11 +66,23 @@ class AlertHistoryPage extends StatelessWidget {
                       '${alert.acknowledged ? '확인 완료' : '미확인'}',
                     ),
                     trailing: const Icon(Icons.chevron_right),
-                    onTap: () {
-                      Navigator.pushNamed(
+                    onTap: () async {
+                      final changed = await Navigator.pushNamed<bool>(
                         context,
                         '/alert-detail',
                         arguments: alert.id,
+                      );
+
+                      if (!context.mounted || changed != true) return;
+
+                      await store.refreshFromServer();
+
+                      if (!context.mounted) return;
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('알림을 확인 처리했습니다.'),
+                        ),
                       );
                     },
                   ),
