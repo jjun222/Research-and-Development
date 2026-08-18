@@ -116,11 +116,11 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       arguments: eventId,
     );
 
-    if (!mounted || changed != true) return;
+    if (!context.mounted || changed != true) return;
 
     await AlertStore.instance.refreshFromServer();
 
-    if (!mounted) return;
+    if (!context.mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
