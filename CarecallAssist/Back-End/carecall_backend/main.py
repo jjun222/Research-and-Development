@@ -1,12 +1,14 @@
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from database import SessionLocal, get_db, init_db
+from fcm_service import send_event_notification_safely
 from groq_service import (
     CareCallChatConfigurationError,
     CareCallChatRateLimitError,
@@ -17,12 +19,15 @@ from repositories import (
     acknowledge_event as acknowledge_event_in_db,
     create_event,
     get_latest_status as get_latest_status_from_db,
+    list_active_fcm_tokens,
     list_events,
     save_latest_status,
     upsert_fcm_token,
 )
 from seed import seed_database
 
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="CareCall Mock API", version="0.1.0")
 
@@ -178,6 +183,7 @@ def chat(request: ChatRequest, db: Session = Depends(get_db)):
 @app.post("/api/v1/edge/motion")
 def receive_edge_motion(
     request: EdgeMotionRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     occurred_at = request.occurred_at or now_iso()
@@ -215,7 +221,7 @@ def receive_edge_motion(
 
     if current_is_fall and not previous_was_fall:
         event_created = True
-        create_event(
+        event = create_event(
             db,
             {
                 "event_id": f"event_{uuid4().hex[:8]}",
@@ -235,6 +241,25 @@ def receive_edge_motion(
                 "acknowledged": False,
             },
         )
+
+        try:
+            active_tokens = list_active_fcm_tokens(
+                db,
+                user_id=request.user_id,
+            )
+
+            if active_tokens:
+                background_tasks.add_task(
+                    send_event_notification_safely,
+                    tokens=active_tokens,
+                    event=event,
+                )
+        except Exception:
+            logger.exception(
+                "FCM notification scheduling failed without affecting the "
+                "saved event: event_id=%s",
+                event["event_id"],
+            )
 
     return {
         "saved": True,
