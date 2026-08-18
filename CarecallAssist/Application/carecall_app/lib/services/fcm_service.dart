@@ -30,13 +30,15 @@ class FcmService {
     debugPrint('알림 권한 상태: ${settings.authorizationStatus}');
 
     currentToken = await _messaging.getToken();
-    debugPrint('FCM Token: $currentToken');
+    debugPrint(
+      'FCM 토큰 발급 여부: ${currentToken != null && currentToken!.isNotEmpty}',
+    );
 
     await registerCurrentToken();
 
     _messaging.onTokenRefresh.listen((newToken) async {
       currentToken = newToken;
-      debugPrint('FCM Token 갱신: $newToken');
+      debugPrint('FCM 토큰 갱신 감지');
       await registerCurrentToken();
     });
 
@@ -76,7 +78,10 @@ class FcmService {
 
   Future<String?> refreshToken() async {
     currentToken = await _messaging.getToken();
-    debugPrint('FCM Token 재조회: $currentToken');
+    debugPrint(
+      'FCM 토큰 재조회 성공 여부: '
+      '${currentToken != null && currentToken!.isNotEmpty}',
+    );
     return currentToken;
   }
 
