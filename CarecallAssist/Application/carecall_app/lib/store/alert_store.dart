@@ -13,6 +13,7 @@ class AlertStore extends ChangeNotifier {
 
   bool _initialized = false;
   bool _loading = false;
+  Future<void>? _refreshFuture;
   LatestStatus _latestStatus = LatestStatus.initial();
 
   List<AlertEvent> get alerts => List.unmodifiable(_alerts);
@@ -37,26 +38,42 @@ class AlertStore extends ChangeNotifier {
     await refreshFromServer();
   }
 
-  Future<void> refreshFromServer() async {
+  Future<void> refreshFromServer() {
+    final inProgress = _refreshFuture;
+    if (inProgress != null) return inProgress;
+
+    final refresh = _refreshFromServer();
+    _refreshFuture = refresh;
+
+    return refresh.whenComplete(() {
+      if (identical(_refreshFuture, refresh)) {
+        _refreshFuture = null;
+      }
+    });
+  }
+
+  Future<void> _refreshFromServer() async {
     _loading = true;
     notifyListeners();
 
-    final fetchedStatus = await CareApiService.instance.fetchLatestStatus();
-    final fetchedEvents = await CareApiService.instance.fetchEvents();
+    try {
+      final fetchedStatus = await CareApiService.instance.fetchLatestStatus();
+      final fetchedEvents = await CareApiService.instance.fetchEvents();
 
-    if (fetchedStatus != null) {
-      _latestStatus = fetchedStatus;
+      if (fetchedStatus != null) {
+        _latestStatus = fetchedStatus;
+      }
+
+      if (fetchedEvents.isNotEmpty) {
+        _alerts
+          ..clear()
+          ..addAll(fetchedEvents);
+        _sortAlerts();
+      }
+    } finally {
+      _loading = false;
+      notifyListeners();
     }
-
-    if (fetchedEvents.isNotEmpty) {
-      _alerts
-        ..clear()
-        ..addAll(fetchedEvents);
-      _sortAlerts();
-    }
-
-    _loading = false;
-    notifyListeners();
   }
 
   void addAlert(AlertEvent alert) {
@@ -82,14 +99,21 @@ class AlertStore extends ChangeNotifier {
     }
   }
 
-  Future<void> acknowledge(String id) async {
+  Future<bool> acknowledge(String id) async {
     final index = _alerts.indexWhere((alert) => alert.id == id);
-    if (index < 0) return;
+    if (index < 0) return false;
 
-    _alerts[index] = _alerts[index].copyWith(acknowledged: true);
-    notifyListeners();
+    final acknowledged = await CareApiService.instance.acknowledgeEvent(id);
+    if (!acknowledged) return false;
 
-    await CareApiService.instance.acknowledgeEvent(id);
+    final currentIndex = _alerts.indexWhere((alert) => alert.id == id);
+    if (currentIndex >= 0) {
+      _alerts[currentIndex] =
+          _alerts[currentIndex].copyWith(acknowledged: true);
+      notifyListeners();
+    }
+
+    return true;
   }
 
   void _sortAlerts() {
