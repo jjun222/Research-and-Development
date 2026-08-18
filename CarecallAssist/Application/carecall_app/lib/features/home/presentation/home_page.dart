@@ -97,7 +97,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   Future<void> _openHistory(BuildContext context) async {
-    final changed = await Navigator.pushNamed<bool>(context, '/history');
+    final changed = await Navigator.pushNamed(context, '/history');
 
     if (!mounted) return;
 
@@ -110,7 +110,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     BuildContext context,
     String eventId,
   ) async {
-    final changed = await Navigator.pushNamed<bool>(
+    final changed = await Navigator.pushNamed(
       context,
       '/alert-detail',
       arguments: eventId,
