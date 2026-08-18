@@ -56,10 +56,11 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
         _result = '$title 실패: $error';
       });
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _running = false;
-      });
+      if (mounted) {
+        setState(() {
+          _running = false;
+        });
+      }
     }
   }
 
