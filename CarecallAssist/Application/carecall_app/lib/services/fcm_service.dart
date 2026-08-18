@@ -107,6 +107,7 @@ class FcmService {
   }) {
     final alert = AlertEvent.fromRemoteMessage(message);
     AlertStore.instance.addAlert(alert);
+    AlertStore.instance.refreshFromServer();
 
     if (openDetailPage) {
       Future.delayed(const Duration(milliseconds: 300), () {
