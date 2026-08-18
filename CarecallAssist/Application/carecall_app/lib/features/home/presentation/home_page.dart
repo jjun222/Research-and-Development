@@ -4,10 +4,34 @@ import '../../../models/alert_event.dart';
 import '../../../models/latest_status.dart';
 import '../../../store/alert_store.dart';
 
-class HomePage extends StatelessWidget {
+class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   static const String _developerPassword = '1234';
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      AlertStore.instance.refreshFromServer();
+    }
+  }
 
   String _formatTime(DateTime time) {
     return '${time.year}-${time.month.toString().padLeft(2, '0')}-${time.day.toString().padLeft(2, '0')} '
@@ -72,6 +96,39 @@ class HomePage extends StatelessWidget {
     }
   }
 
+  Future<void> _openHistory(BuildContext context) async {
+    final changed = await Navigator.pushNamed<bool>(context, '/history');
+
+    if (!mounted) return;
+
+    if (changed == true) {
+      await AlertStore.instance.refreshFromServer();
+    }
+  }
+
+  Future<void> _openAlertDetail(
+    BuildContext context,
+    String eventId,
+  ) async {
+    final changed = await Navigator.pushNamed<bool>(
+      context,
+      '/alert-detail',
+      arguments: eventId,
+    );
+
+    if (!mounted || changed != true) return;
+
+    await AlertStore.instance.refreshFromServer();
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('알림을 확인 처리했습니다.'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final store = AlertStore.instance;
@@ -115,7 +172,9 @@ class HomePage extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 _QuickActionGrid(
-                  onHistory: () => Navigator.pushNamed(context, '/history'),
+                  onHistory: () {
+                    _openHistory(context);
+                  },
                   onMonitoring: () =>
                       Navigator.pushNamed(context, '/monitoring'),
                   onChat: () => Navigator.pushNamed(context, '/chat'),
@@ -125,6 +184,11 @@ class HomePage extends StatelessWidget {
                 _LatestAlertCard(
                   alert: latestAlert,
                   formatTime: _formatTime,
+                  onOpenDetail: latestAlert == null
+                      ? null
+                      : () {
+                          _openAlertDetail(context, latestAlert.id);
+                        },
                 ),
               ],
             ),
@@ -326,10 +390,12 @@ class _QuickActionButton extends StatelessWidget {
 class _LatestAlertCard extends StatelessWidget {
   final AlertEvent? alert;
   final String Function(DateTime time) formatTime;
+  final VoidCallback? onOpenDetail;
 
   const _LatestAlertCard({
     required this.alert,
     required this.formatTime,
+    required this.onOpenDetail,
   });
 
   @override
@@ -385,13 +451,7 @@ class _LatestAlertCard extends StatelessWidget {
             Text('확인 상태: ${event.acknowledged ? '확인 완료' : '미확인'}'),
             const SizedBox(height: 12),
             OutlinedButton(
-              onPressed: () {
-                Navigator.pushNamed(
-                  context,
-                  '/alert-detail',
-                  arguments: event.id,
-                );
-              },
+              onPressed: onOpenDetail,
               child: const Text('상세 보기'),
             ),
           ],
