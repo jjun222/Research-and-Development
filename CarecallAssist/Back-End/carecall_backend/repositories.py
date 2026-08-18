@@ -171,3 +171,18 @@ def upsert_fcm_token(
     db.commit()
     db.refresh(record)
     return record
+
+
+def list_active_fcm_tokens(
+    db: Session,
+    *,
+    user_id: str,
+) -> list[str]:
+    tokens = db.scalars(
+        select(FcmTokenRecord.fcm_token).where(
+            FcmTokenRecord.user_id == user_id,
+            FcmTokenRecord.active.is_(True),
+        )
+    ).all()
+
+    return list(tokens)
