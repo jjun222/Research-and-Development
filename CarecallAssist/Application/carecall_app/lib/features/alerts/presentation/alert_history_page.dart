@@ -49,7 +49,7 @@ class AlertHistoryPage extends StatelessWidget {
             child: ListView.separated(
               padding: const EdgeInsets.all(16),
               itemCount: alerts.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              separatorBuilder: (_, _) => const SizedBox(height: 8),
               itemBuilder: (context, index) {
                 final alert = alerts[index];
 
