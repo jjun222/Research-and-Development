@@ -67,7 +67,7 @@ class AlertHistoryPage extends StatelessWidget {
                     ),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () async {
-                      final changed = await Navigator.pushNamed<bool>(
+                      final changed = await Navigator.pushNamed(
                         context,
                         '/alert-detail',
                         arguments: alert.id,
