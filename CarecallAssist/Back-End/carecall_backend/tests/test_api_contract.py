@@ -306,6 +306,165 @@ def test_edge_motion_contract_and_fall_event_creation():
     assert fall_event["acknowledged"] is False
 
 
+def test_edge_motion_does_not_duplicate_continuous_fall_event():
+    with SessionLocal() as db:
+        initial_fall_event_count = db.scalar(
+            select(func.count())
+            .select_from(EventRecord)
+            .where(EventRecord.event_type == "fall_suspected")
+        )
+
+    first_fall_response = client.post(
+        "/api/v1/edge/motion",
+        json={
+            "device_id": "jetson_01",
+            "user_id": "user_01",
+            "room": "침실",
+            "posture": "fallen",
+            "motion_state": "still",
+            "fall_risk": "high",
+            "confidence": 0.93,
+            "person_detected": True,
+            "snapshot_url": "https://example.test/fall-1.jpg",
+            "stream_url": "https://example.test/stream.mjpg",
+            "occurred_at": "2026-08-13T12:00:00+09:00",
+        },
+    )
+
+    repeated_fall_response = client.post(
+        "/api/v1/edge/motion",
+        json={
+            "device_id": "jetson_01",
+            "user_id": "user_01",
+            "room": "침실",
+            "posture": "fallen",
+            "motion_state": "still",
+            "fall_risk": "high",
+            "confidence": 0.95,
+            "person_detected": True,
+            "snapshot_url": "https://example.test/fall-2.jpg",
+            "stream_url": "https://example.test/stream.mjpg",
+            "occurred_at": "2026-08-13T12:00:05+09:00",
+        },
+    )
+
+    assert first_fall_response.status_code == 200
+    assert first_fall_response.json()["event_created"] is True
+
+    assert repeated_fall_response.status_code == 200
+    assert repeated_fall_response.json() == {
+        "saved": True,
+        "event_created": False,
+        "latest_status_updated": True,
+    }
+
+    with SessionLocal() as db:
+        final_fall_event_count = db.scalar(
+            select(func.count())
+            .select_from(EventRecord)
+            .where(EventRecord.event_type == "fall_suspected")
+        )
+
+    assert final_fall_event_count == initial_fall_event_count + 1
+
+    status = client.get("/api/v1/status/latest").json()
+    assert status["posture"] == "fallen"
+    assert status["fall_risk"] == "high"
+    assert status["updated_at"] == "2026-08-13T12:00:05+09:00"
+    assert status["snapshot_url"] == "https://example.test/fall-2.jpg"
+
+
+def test_edge_motion_creates_new_event_after_fall_recovery():
+    with SessionLocal() as db:
+        initial_fall_event_count = db.scalar(
+            select(func.count())
+            .select_from(EventRecord)
+            .where(EventRecord.event_type == "fall_suspected")
+        )
+
+    first_fall_response = client.post(
+        "/api/v1/edge/motion",
+        json={
+            "device_id": "jetson_01",
+            "user_id": "user_01",
+            "room": "거실",
+            "posture": "fallen",
+            "motion_state": "still",
+            "fall_risk": "high",
+            "confidence": 0.91,
+            "person_detected": True,
+            "occurred_at": "2026-08-13T13:00:00+09:00",
+        },
+    )
+
+    recovery_response = client.post(
+        "/api/v1/edge/motion",
+        json={
+            "device_id": "jetson_01",
+            "user_id": "user_01",
+            "room": "거실",
+            "posture": "standing",
+            "motion_state": "moving",
+            "fall_risk": "low",
+            "confidence": 0.96,
+            "person_detected": True,
+            "occurred_at": "2026-08-13T13:01:00+09:00",
+        },
+    )
+
+    assert first_fall_response.status_code == 200
+    assert first_fall_response.json()["event_created"] is True
+
+    assert recovery_response.status_code == 200
+    assert recovery_response.json() == {
+        "saved": True,
+        "event_created": False,
+        "latest_status_updated": True,
+    }
+
+    recovered_status = client.get("/api/v1/status/latest").json()
+    assert recovered_status["posture"] == "standing"
+    assert recovered_status["motion_state"] == "moving"
+    assert recovered_status["fall_risk"] == "low"
+    assert recovered_status["updated_at"] == "2026-08-13T13:01:00+09:00"
+
+    second_fall_response = client.post(
+        "/api/v1/edge/motion",
+        json={
+            "device_id": "jetson_01",
+            "user_id": "user_01",
+            "room": "거실",
+            "posture": "fallen",
+            "motion_state": "still",
+            "fall_risk": "high",
+            "confidence": 0.94,
+            "person_detected": True,
+            "occurred_at": "2026-08-13T13:02:00+09:00",
+        },
+    )
+
+    assert second_fall_response.status_code == 200
+    assert second_fall_response.json() == {
+        "saved": True,
+        "event_created": True,
+        "latest_status_updated": True,
+    }
+
+    with SessionLocal() as db:
+        final_fall_event_count = db.scalar(
+            select(func.count())
+            .select_from(EventRecord)
+            .where(EventRecord.event_type == "fall_suspected")
+        )
+
+    assert final_fall_event_count == initial_fall_event_count + 2
+
+    latest_status = client.get("/api/v1/status/latest").json()
+    assert latest_status["posture"] == "fallen"
+    assert latest_status["fall_risk"] == "high"
+    assert latest_status["updated_at"] == "2026-08-13T13:02:00+09:00"
+
+
 def test_developer_help_request_contract():
     response = client.post("/api/v1/dev/test/help-request")
 
