@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 
 os.environ["DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
 
+import fcm_service  # noqa: E402
 import main  # noqa: E402
 from database import Base, SessionLocal, engine  # noqa: E402
 from models import EventRecord, FcmTokenRecord  # noqa: E402
@@ -479,3 +480,245 @@ def test_developer_help_request_contract():
     status = client.get("/api/v1/status/latest").json()
     assert status["last_event_type"] == "help_request"
     assert status["updated_at"] == data["event"]["occurred_at"]
+
+
+def test_fcm_is_scheduled_only_for_new_fall_transitions(monkeypatch):
+    register_response = client.post(
+        "/api/v1/devices/fcm-token",
+        json={
+            "guardian_id": "guardian_01",
+            "user_id": "user_01",
+            "platform": "android",
+            "fcm_token": "active-test-token",
+        },
+    )
+    assert register_response.status_code == 200
+
+    captured_notifications = []
+
+    def fake_send_event_notification_safely(*, tokens, event):
+        captured_notifications.append(
+            {
+                "tokens": list(tokens),
+                "event": dict(event),
+            }
+        )
+
+    monkeypatch.setattr(
+        main,
+        "send_event_notification_safely",
+        fake_send_event_notification_safely,
+    )
+
+    first_fall_response = client.post(
+        "/api/v1/edge/motion",
+        json={
+            "device_id": "jetson_01",
+            "user_id": "user_01",
+            "room": "침실",
+            "posture": "fallen",
+            "motion_state": "still",
+            "fall_risk": "high",
+            "confidence": 0.93,
+            "person_detected": True,
+            "occurred_at": "2026-08-18T15:00:00+09:00",
+        },
+    )
+
+    assert first_fall_response.status_code == 200
+    assert first_fall_response.json()["event_created"] is True
+    assert len(captured_notifications) == 1
+    assert captured_notifications[0]["tokens"] == ["active-test-token"]
+    assert captured_notifications[0]["event"]["event_type"] == "fall_suspected"
+
+    repeated_fall_response = client.post(
+        "/api/v1/edge/motion",
+        json={
+            "device_id": "jetson_01",
+            "user_id": "user_01",
+            "room": "침실",
+            "posture": "fallen",
+            "motion_state": "still",
+            "fall_risk": "high",
+            "confidence": 0.95,
+            "person_detected": True,
+            "occurred_at": "2026-08-18T15:00:05+09:00",
+        },
+    )
+
+    assert repeated_fall_response.status_code == 200
+    assert repeated_fall_response.json()["event_created"] is False
+    assert len(captured_notifications) == 1
+
+    recovery_response = client.post(
+        "/api/v1/edge/motion",
+        json={
+            "device_id": "jetson_01",
+            "user_id": "user_01",
+            "room": "침실",
+            "posture": "standing",
+            "motion_state": "moving",
+            "fall_risk": "low",
+            "confidence": 0.98,
+            "person_detected": True,
+            "occurred_at": "2026-08-18T15:01:00+09:00",
+        },
+    )
+
+    assert recovery_response.status_code == 200
+    assert recovery_response.json()["event_created"] is False
+    assert len(captured_notifications) == 1
+
+    second_fall_response = client.post(
+        "/api/v1/edge/motion",
+        json={
+            "device_id": "jetson_01",
+            "user_id": "user_01",
+            "room": "침실",
+            "posture": "fallen",
+            "motion_state": "still",
+            "fall_risk": "high",
+            "confidence": 0.94,
+            "person_detected": True,
+            "occurred_at": "2026-08-18T15:02:00+09:00",
+        },
+    )
+
+    assert second_fall_response.status_code == 200
+    assert second_fall_response.json()["event_created"] is True
+    assert len(captured_notifications) == 2
+    assert (
+        captured_notifications[0]["event"]["event_id"]
+        != captured_notifications[1]["event"]["event_id"]
+    )
+
+
+def test_fcm_is_not_scheduled_without_an_active_token(monkeypatch):
+    with SessionLocal() as db:
+        db.add(
+            FcmTokenRecord(
+                guardian_id="guardian_01",
+                user_id="user_01",
+                platform="android",
+                fcm_token="inactive-test-token",
+                registered_at="2026-08-18T15:10:00+09:00",
+                updated_at="2026-08-18T15:10:00+09:00",
+                active=False,
+            )
+        )
+        db.commit()
+
+    captured_notifications = []
+
+    def fake_send_event_notification_safely(*, tokens, event):
+        captured_notifications.append((tokens, event))
+
+    monkeypatch.setattr(
+        main,
+        "send_event_notification_safely",
+        fake_send_event_notification_safely,
+    )
+
+    response = client.post(
+        "/api/v1/edge/motion",
+        json={
+            "device_id": "jetson_01",
+            "user_id": "user_01",
+            "room": "거실",
+            "posture": "fallen",
+            "motion_state": "still",
+            "fall_risk": "high",
+            "confidence": 0.91,
+            "person_detected": True,
+            "occurred_at": "2026-08-18T15:11:00+09:00",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "saved": True,
+        "event_created": True,
+        "latest_status_updated": True,
+    }
+    assert captured_notifications == []
+
+
+def test_fcm_failure_does_not_break_status_or_event_storage(monkeypatch):
+    register_response = client.post(
+        "/api/v1/devices/fcm-token",
+        json={
+            "guardian_id": "guardian_01",
+            "user_id": "user_01",
+            "platform": "android",
+            "fcm_token": "failing-test-token",
+        },
+    )
+    assert register_response.status_code == 200
+
+    def fake_send_event_notification(**kwargs):
+        raise RuntimeError("simulated Firebase failure")
+
+    monkeypatch.setattr(
+        fcm_service,
+        "send_event_notification",
+        fake_send_event_notification,
+    )
+
+    response = client.post(
+        "/api/v1/edge/motion",
+        json={
+            "device_id": "jetson_01",
+            "user_id": "user_01",
+            "room": "욕실",
+            "posture": "fallen",
+            "motion_state": "still",
+            "fall_risk": "high",
+            "confidence": 0.92,
+            "person_detected": True,
+            "occurred_at": "2026-08-18T15:20:00+09:00",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "saved": True,
+        "event_created": True,
+        "latest_status_updated": True,
+    }
+
+    status = client.get("/api/v1/status/latest").json()
+    assert status["room"] == "욕실"
+    assert status["posture"] == "fallen"
+    assert status["fall_risk"] == "high"
+
+    events = client.get("/api/v1/events").json()["events"]
+    assert any(
+        event["event_type"] == "fall_suspected"
+        and event["location"] == "욕실"
+        for event in events
+    )
+
+
+def test_fcm_event_data_contains_only_strings():
+    data = fcm_service.build_event_fcm_data(
+        {
+            "event_id": "event_test",
+            "user_id": "user_01",
+            "event_type": "fall_suspected",
+            "location": "거실",
+            "device_id": "jetson_01",
+            "severity": "critical",
+            "posture": "fallen",
+            "confidence": 0.93,
+            "image_url": None,
+            "stream_url": "",
+            "occurred_at": "2026-08-18T15:30:00+09:00",
+            "title": "낙상 의심",
+            "body": "거실에서 낙상 의심 상태가 감지되었습니다.",
+        }
+    )
+
+    assert data["confidence"] == "0.93"
+    assert "image_url" not in data
+    assert data["stream_url"] == ""
+    assert all(isinstance(value, str) for value in data.values())
