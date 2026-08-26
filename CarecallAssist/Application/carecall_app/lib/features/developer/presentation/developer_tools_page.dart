@@ -6,6 +6,7 @@ import '../../../services/app_config.dart';
 import '../../../services/care_api_service.dart';
 import '../../../services/fcm_service.dart';
 import '../../../store/alert_store.dart';
+import '../../../utils/korea_time_formatter.dart';
 
 class DeveloperToolsPage extends StatefulWidget {
   const DeveloperToolsPage({super.key});
@@ -94,13 +95,18 @@ class _DeveloperToolsPageState extends State<DeveloperToolsPage> {
       return '/status/latest 응답을 받지 못했습니다.';
     }
 
+    final updatedAt = KoreaTimeFormatter.formatDateTime(
+      status.updatedAt,
+      includeSeconds: true,
+    );
+
     return '/status/latest 성공\n'
         'userId: ${status.userId}\n'
         'room: ${status.room}\n'
         'posture: ${status.posture}\n'
         'lastEventType: ${status.lastEventType}\n'
         'online: ${status.online}\n'
-        'updatedAt: ${status.updatedAt}';
+        'updatedAt: $updatedAt';
   }
 
   Future<String> _testEvents() async {
