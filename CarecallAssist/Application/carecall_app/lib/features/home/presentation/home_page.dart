@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../models/alert_event.dart';
 import '../../../models/latest_status.dart';
 import '../../../store/alert_store.dart';
+import '../../../utils/korea_time_formatter.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -31,11 +32,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       AlertStore.instance.refreshFromServer();
     }
-  }
-
-  String _formatTime(DateTime time) {
-    return '${time.year}-${time.month.toString().padLeft(2, '0')}-${time.day.toString().padLeft(2, '0')} '
-        '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
   }
 
   Future<void> _openDeveloperTools(BuildContext context) async {
@@ -168,7 +164,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 _StatusCard(
                   status: store.latestStatus,
                   unacknowledgedCount: store.unacknowledgedCount,
-                  formatTime: _formatTime,
                 ),
                 const SizedBox(height: 16),
                 _QuickActionGrid(
@@ -183,7 +178,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 const SizedBox(height: 16),
                 _LatestAlertCard(
                   alert: latestAlert,
-                  formatTime: _formatTime,
                   onOpenDetail: latestAlert == null
                       ? null
                       : () {
@@ -202,12 +196,10 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 class _StatusCard extends StatelessWidget {
   final LatestStatus status;
   final int unacknowledgedCount;
-  final String Function(DateTime time) formatTime;
 
   const _StatusCard({
     required this.status,
     required this.unacknowledgedCount,
-    required this.formatTime,
   });
 
   @override
@@ -250,12 +242,14 @@ class _StatusCard extends StatelessWidget {
             ),
             _StatusRow(
               label: '갱신 시간',
-              value: formatTime(status.updatedAt),
+              value: KoreaTimeFormatter.formatDateTime(status.updatedAt),
             ),
             if (status.lastImpactAt != null)
               _StatusRow(
                 label: '최근 충격',
-                value: formatTime(status.lastImpactAt!),
+                value: KoreaTimeFormatter.formatDateTime(
+                  status.lastImpactAt!,
+                ),
               ),
             if (unacknowledgedCount > 0) ...[
               const SizedBox(height: 10),
@@ -389,12 +383,10 @@ class _QuickActionButton extends StatelessWidget {
 
 class _LatestAlertCard extends StatelessWidget {
   final AlertEvent? alert;
-  final String Function(DateTime time) formatTime;
   final VoidCallback? onOpenDetail;
 
   const _LatestAlertCard({
     required this.alert,
-    required this.formatTime,
     required this.onOpenDetail,
   });
 
@@ -447,7 +439,9 @@ class _LatestAlertCard extends StatelessWidget {
             Text('위치: ${event.location}'),
             if (event.bodyPart != null) Text('부위: ${event.bodyPart}'),
             if (event.posture != null) Text('행동 상태: ${event.posture}'),
-            Text('시간: ${formatTime(event.occurredAt)}'),
+            Text(
+              '시간: ${KoreaTimeFormatter.formatDateTime(event.occurredAt)}',
+            ),
             Text('확인 상태: ${event.acknowledged ? '확인 완료' : '미확인'}'),
             const SizedBox(height: 12),
             OutlinedButton(
