@@ -2,14 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../../models/alert_event.dart';
 import '../../../store/alert_store.dart';
+import '../../../utils/korea_time_formatter.dart';
 
 class AlertHistoryPage extends StatelessWidget {
   const AlertHistoryPage({super.key});
-
-  String _formatTime(DateTime time) {
-    return '${time.month.toString().padLeft(2, '0')}-${time.day.toString().padLeft(2, '0')} '
-        '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
-  }
 
   IconData _iconFor(AlertEvent alert) {
     if (alert.eventType == 'help_request') return Icons.touch_app;
@@ -52,6 +48,10 @@ class AlertHistoryPage extends StatelessWidget {
               separatorBuilder: (_, _) => const SizedBox(height: 8),
               itemBuilder: (context, index) {
                 final alert = alerts[index];
+                final occurredAt = KoreaTimeFormatter.formatDateTime(
+                  alert.occurredAt,
+                  includeYear: false,
+                );
 
                 return Card(
                   child: ListTile(
@@ -61,7 +61,7 @@ class AlertHistoryPage extends StatelessWidget {
                     ),
                     title: Text('${alert.typeLabel} · ${alert.location}'),
                     subtitle: Text(
-                      '${_formatTime(alert.occurredAt)} · '
+                      '$occurredAt · '
                       '${alert.severityLabel} · '
                       '${alert.acknowledged ? '확인 완료' : '미확인'}',
                     ),
