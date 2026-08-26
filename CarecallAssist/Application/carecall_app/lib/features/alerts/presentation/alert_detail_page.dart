@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../store/alert_store.dart';
+import '../../../utils/korea_time_formatter.dart';
 
 class AlertDetailPage extends StatefulWidget {
   final String? eventId;
@@ -16,11 +17,6 @@ class AlertDetailPage extends StatefulWidget {
 
 class _AlertDetailPageState extends State<AlertDetailPage> {
   bool _submitting = false;
-
-  String _formatTime(DateTime time) {
-    return '${time.year}-${time.month.toString().padLeft(2, '0')}-${time.day.toString().padLeft(2, '0')} '
-        '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}:${time.second.toString().padLeft(2, '0')}';
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -91,7 +87,10 @@ class _AlertDetailPageState extends State<AlertDetailPage> {
                         ),
                       _DetailRow(
                         label: '발생 시간',
-                        value: _formatTime(alert.occurredAt),
+                        value: KoreaTimeFormatter.formatDateTime(
+                          alert.occurredAt,
+                          includeSeconds: true,
+                        ),
                       ),
                       _DetailRow(label: '장치 ID', value: alert.deviceId),
                       _DetailRow(label: '이벤트 ID', value: alert.id),
