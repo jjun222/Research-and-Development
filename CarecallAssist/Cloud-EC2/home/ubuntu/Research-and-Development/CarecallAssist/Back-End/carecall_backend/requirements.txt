@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+pydantic
+groq
+pytest
+httpx2
+sqlalchemy>=2.0,<2.1
