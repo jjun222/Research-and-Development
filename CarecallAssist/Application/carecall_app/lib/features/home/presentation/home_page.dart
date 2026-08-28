@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../models/alert_event.dart';
@@ -14,15 +16,24 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   static const String _developerPassword = '1234';
+  static const Duration _autoRefreshInterval = Duration(seconds: 30);
+
+  Timer? _autoRefreshTimer;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _startAutoRefresh();
+    });
   }
 
   @override
   void dispose() {
+    _stopAutoRefresh();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -30,8 +41,25 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      AlertStore.instance.refreshFromServer();
+      _startAutoRefresh();
+    } else {
+      _stopAutoRefresh();
     }
+  }
+
+  void _startAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+
+    unawaited(AlertStore.instance.refreshFromServer());
+
+    _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (_) {
+      unawaited(AlertStore.instance.refreshFromServer());
+    });
+  }
+
+  void _stopAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = null;
   }
 
   Future<void> _openDeveloperTools(BuildContext context) async {
