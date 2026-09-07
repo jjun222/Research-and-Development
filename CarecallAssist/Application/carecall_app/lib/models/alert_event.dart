@@ -87,11 +87,11 @@ class AlertEvent {
       imageUrl: _readNullableString(data, const ['image_url', 'imageUrl']),
       streamUrl: _readNullableString(data, const ['stream_url', 'streamUrl']),
       occurredAt: _parseDateTime(
-            _readNullableString(
-              data,
-              const ['occurred_at', 'pressed_at', 'created_at', 'timestamp'],
-            ),
-          ) ??
+        _readNullableString(
+          data,
+          const ['occurred_at', 'pressed_at', 'created_at', 'timestamp'],
+        ),
+      ) ??
           now,
       acknowledged: false,
     );
@@ -143,11 +143,11 @@ class AlertEvent {
       imageUrl: _readNullableString(json, const ['image_url', 'imageUrl']),
       streamUrl: _readNullableString(json, const ['stream_url', 'streamUrl']),
       occurredAt: _parseDateTime(
-            _readNullableString(
-              json,
-              const ['occurred_at', 'pressed_at', 'created_at', 'timestamp'],
-            ),
-          ) ??
+        _readNullableString(
+          json,
+          const ['occurred_at', 'pressed_at', 'created_at', 'timestamp'],
+        ),
+      ) ??
           now,
       acknowledged: _readBool(
         json,
@@ -206,6 +206,7 @@ class AlertEvent {
   String get typeLabel {
     switch (eventType) {
       case 'help_request':
+      case 'call_button_pressed':
         return '도움 요청';
       case 'impact_detected':
         return '충격 감지';
@@ -238,10 +239,10 @@ class AlertEvent {
   }
 
   static String _readString(
-    Map<String, dynamic> data, {
-    required List<String> keys,
-    required String fallback,
-  }) {
+      Map<String, dynamic> data, {
+        required List<String> keys,
+        required String fallback,
+      }) {
     for (final key in keys) {
       final value = data[key];
       if (value != null && value.toString().trim().isNotEmpty) {
@@ -252,9 +253,9 @@ class AlertEvent {
   }
 
   static String? _readNullableString(
-    Map<String, dynamic> data,
-    List<String> keys,
-  ) {
+      Map<String, dynamic> data,
+      List<String> keys,
+      ) {
     for (final key in keys) {
       final value = data[key];
       if (value != null && value.toString().trim().isNotEmpty) {
@@ -265,10 +266,10 @@ class AlertEvent {
   }
 
   static bool _readBool(
-    Map<String, dynamic> data, {
-    required List<String> keys,
-    required bool fallback,
-  }) {
+      Map<String, dynamic> data, {
+        required List<String> keys,
+        required bool fallback,
+      }) {
     for (final key in keys) {
       final value = data[key];
       if (value is bool) return value;
@@ -281,9 +282,9 @@ class AlertEvent {
   }
 
   static double? _readDouble(
-    Map<String, dynamic> data,
-    List<String> keys,
-  ) {
+      Map<String, dynamic> data,
+      List<String> keys,
+      ) {
     for (final key in keys) {
       final value = data[key];
       if (value is num) return value.toDouble();
