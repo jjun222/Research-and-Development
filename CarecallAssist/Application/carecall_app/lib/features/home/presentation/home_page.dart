@@ -112,11 +112,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (allowed == true) {
       Navigator.pushNamed(context, '/developer-tools');
     } else if (allowed == false) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('개발자 비밀번호가 올바르지 않습니다.'),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('개발자 비밀번호가 올바르지 않습니다.')));
     }
   }
 
@@ -130,10 +128,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _openAlertDetail(
-    BuildContext context,
-    String eventId,
-  ) async {
+  Future<void> _openAlertDetail(BuildContext context, String eventId) async {
     final changed = await Navigator.pushNamed(
       context,
       '/alert-detail',
@@ -146,11 +141,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
     if (!context.mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('알림을 확인 처리했습니다.'),
-      ),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('알림을 확인 처리했습니다.')));
   }
 
   @override
@@ -225,10 +218,7 @@ class _StatusCard extends StatelessWidget {
   final LatestStatus status;
   final int unacknowledgedCount;
 
-  const _StatusCard({
-    required this.status,
-    required this.unacknowledgedCount,
-  });
+  const _StatusCard({required this.status, required this.unacknowledgedCount});
 
   @override
   Widget build(BuildContext context) {
@@ -263,7 +253,10 @@ class _StatusCard extends StatelessWidget {
             const SizedBox(height: 16),
             _StatusRow(label: '현재 위치', value: status.room),
             _StatusRow(label: '행동 상태', value: status.posture),
-            _StatusRow(label: '최근 이벤트', value: status.lastEventType),
+            _StatusRow(
+              label: '최근 이벤트',
+              value: AlertEvent.typeLabelFor(status.lastEventType),
+            ),
             _StatusRow(
               label: '연결 상태',
               value: status.online ? '온라인' : '서버 연결 전',
@@ -275,9 +268,7 @@ class _StatusCard extends StatelessWidget {
             if (status.lastImpactAt != null)
               _StatusRow(
                 label: '최근 충격',
-                value: KoreaTimeFormatter.formatDateTime(
-                  status.lastImpactAt!,
-                ),
+                value: KoreaTimeFormatter.formatDateTime(status.lastImpactAt!),
               ),
             if (unacknowledgedCount > 0) ...[
               const SizedBox(height: 10),
@@ -300,10 +291,7 @@ class _StatusRow extends StatelessWidget {
   final String label;
   final String value;
 
-  const _StatusRow({
-    required this.label,
-    required this.value,
-  });
+  const _StatusRow({required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
@@ -398,10 +386,7 @@ class _QuickActionButton extends StatelessWidget {
           children: [
             Icon(icon, size: 30),
             const SizedBox(height: 8),
-            Text(
-              title,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
           ],
         ),
       ),
@@ -413,10 +398,7 @@ class _LatestAlertCard extends StatelessWidget {
   final AlertEvent? alert;
   final VoidCallback? onOpenDetail;
 
-  const _LatestAlertCard({
-    required this.alert,
-    required this.onOpenDetail,
-  });
+  const _LatestAlertCard({required this.alert, required this.onOpenDetail});
 
   @override
   Widget build(BuildContext context) {
@@ -429,10 +411,7 @@ class _LatestAlertCard extends StatelessWidget {
             children: [
               Text(
                 '최근 알림',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               SizedBox(height: 10),
               Text('아직 수신된 알림이 없습니다.'),
@@ -452,10 +431,7 @@ class _LatestAlertCard extends StatelessWidget {
           children: [
             const Text(
               '최근 알림',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             Text(
@@ -467,15 +443,10 @@ class _LatestAlertCard extends StatelessWidget {
             Text('위치: ${event.location}'),
             if (event.bodyPart != null) Text('부위: ${event.bodyPart}'),
             if (event.posture != null) Text('행동 상태: ${event.posture}'),
-            Text(
-              '시간: ${KoreaTimeFormatter.formatDateTime(event.occurredAt)}',
-            ),
+            Text('시간: ${KoreaTimeFormatter.formatDateTime(event.occurredAt)}'),
             Text('확인 상태: ${event.acknowledged ? '확인 완료' : '미확인'}'),
             const SizedBox(height: 12),
-            OutlinedButton(
-              onPressed: onOpenDetail,
-              child: const Text('상세 보기'),
-            ),
+            OutlinedButton(onPressed: onOpenDetail, child: const Text('상세 보기')),
           ],
         ),
       ),
