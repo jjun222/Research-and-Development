@@ -48,13 +48,11 @@ class AlertEvent {
         keys: const ['event_id', 'id'],
         fallback: message.messageId ?? 'event_${now.millisecondsSinceEpoch}',
       ),
-      title: message.notification?.title ??
-          _readString(
-            data,
-            keys: const ['title'],
-            fallback: '돌봄 알림 발생',
-          ),
-      body: message.notification?.body ??
+      title:
+          message.notification?.title ??
+          _readString(data, keys: const ['title'], fallback: '돌봄 알림 발생'),
+      body:
+          message.notification?.body ??
           _readString(
             data,
             keys: const ['body', 'message', 'description'],
@@ -86,12 +84,15 @@ class AlertEvent {
       confidence: _readDouble(data, const ['confidence', 'score']),
       imageUrl: _readNullableString(data, const ['image_url', 'imageUrl']),
       streamUrl: _readNullableString(data, const ['stream_url', 'streamUrl']),
-      occurredAt: _parseDateTime(
-        _readNullableString(
-          data,
-          const ['occurred_at', 'pressed_at', 'created_at', 'timestamp'],
-        ),
-      ) ??
+      occurredAt:
+          _parseDateTime(
+            _readNullableString(data, const [
+              'occurred_at',
+              'pressed_at',
+              'created_at',
+              'timestamp',
+            ]),
+          ) ??
           now,
       acknowledged: false,
     );
@@ -106,11 +107,7 @@ class AlertEvent {
         keys: const ['event_id', 'id'],
         fallback: 'event_${now.millisecondsSinceEpoch}',
       ),
-      title: _readString(
-        json,
-        keys: const ['title'],
-        fallback: '돌봄 알림 발생',
-      ),
+      title: _readString(json, keys: const ['title'], fallback: '돌봄 알림 발생'),
       body: _readString(
         json,
         keys: const ['body', 'message', 'description'],
@@ -142,12 +139,15 @@ class AlertEvent {
       confidence: _readDouble(json, const ['confidence', 'score']),
       imageUrl: _readNullableString(json, const ['image_url', 'imageUrl']),
       streamUrl: _readNullableString(json, const ['stream_url', 'streamUrl']),
-      occurredAt: _parseDateTime(
-        _readNullableString(
-          json,
-          const ['occurred_at', 'pressed_at', 'created_at', 'timestamp'],
-        ),
-      ) ??
+      occurredAt:
+          _parseDateTime(
+            _readNullableString(json, const [
+              'occurred_at',
+              'pressed_at',
+              'created_at',
+              'timestamp',
+            ]),
+          ) ??
           now,
       acknowledged: _readBool(
         json,
@@ -203,7 +203,9 @@ class AlertEvent {
     return severity == 'critical' || isImpactEvent;
   }
 
-  String get typeLabel {
+  String get typeLabel => typeLabelFor(eventType);
+
+  static String typeLabelFor(String eventType) {
     switch (eventType) {
       case 'help_request':
       case 'call_button_pressed':
@@ -239,10 +241,10 @@ class AlertEvent {
   }
 
   static String _readString(
-      Map<String, dynamic> data, {
-        required List<String> keys,
-        required String fallback,
-      }) {
+    Map<String, dynamic> data, {
+    required List<String> keys,
+    required String fallback,
+  }) {
     for (final key in keys) {
       final value = data[key];
       if (value != null && value.toString().trim().isNotEmpty) {
@@ -253,9 +255,9 @@ class AlertEvent {
   }
 
   static String? _readNullableString(
-      Map<String, dynamic> data,
-      List<String> keys,
-      ) {
+    Map<String, dynamic> data,
+    List<String> keys,
+  ) {
     for (final key in keys) {
       final value = data[key];
       if (value != null && value.toString().trim().isNotEmpty) {
@@ -266,10 +268,10 @@ class AlertEvent {
   }
 
   static bool _readBool(
-      Map<String, dynamic> data, {
-        required List<String> keys,
-        required bool fallback,
-      }) {
+    Map<String, dynamic> data, {
+    required List<String> keys,
+    required bool fallback,
+  }) {
     for (final key in keys) {
       final value = data[key];
       if (value is bool) return value;
@@ -281,10 +283,7 @@ class AlertEvent {
     return fallback;
   }
 
-  static double? _readDouble(
-      Map<String, dynamic> data,
-      List<String> keys,
-      ) {
+  static double? _readDouble(Map<String, dynamic> data, List<String> keys) {
     for (final key in keys) {
       final value = data[key];
       if (value is num) return value.toDouble();
