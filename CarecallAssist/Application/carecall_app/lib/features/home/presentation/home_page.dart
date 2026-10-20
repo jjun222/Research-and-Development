@@ -193,6 +193,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   },
                   onMonitoring: () =>
                       Navigator.pushNamed(context, '/monitoring'),
+                  onSimulation: () =>
+                      Navigator.pushNamed(context, '/body-simulation'),
                   onChat: () => Navigator.pushNamed(context, '/chat'),
                   onRefresh: store.refreshFromServer,
                 ),
@@ -317,12 +319,14 @@ class _StatusRow extends StatelessWidget {
 class _QuickActionGrid extends StatelessWidget {
   final VoidCallback onHistory;
   final VoidCallback onMonitoring;
+  final VoidCallback onSimulation;
   final VoidCallback onChat;
   final Future<void> Function() onRefresh;
 
   const _QuickActionGrid({
     required this.onHistory,
     required this.onMonitoring,
+    required this.onSimulation,
     required this.onChat,
     required this.onRefresh,
   });
@@ -346,6 +350,11 @@ class _QuickActionGrid extends StatelessWidget {
           icon: Icons.videocam,
           title: '실시간 확인',
           onTap: onMonitoring,
+        ),
+        _QuickActionButton(
+          icon: Icons.accessibility_new,
+          title: '신체 시뮬레이션',
+          onTap: onSimulation,
         ),
         _QuickActionButton(
           icon: Icons.chat_bubble_outline,
