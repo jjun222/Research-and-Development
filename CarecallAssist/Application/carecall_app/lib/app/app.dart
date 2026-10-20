@@ -5,6 +5,7 @@ import '../features/alerts/presentation/alert_history_page.dart';
 import '../features/chat/presentation/chat_page.dart';
 import '../features/developer/presentation/developer_tools_page.dart';
 import '../features/home/presentation/home_page.dart';
+import '../features/monitoring/presentation/body_simulation_page.dart';
 import '../features/monitoring/presentation/camera_monitoring_page.dart';
 import '../features/settings/presentation/settings_page.dart';
 import '../services/navigation_service.dart';
@@ -28,6 +29,7 @@ class CareCallApp extends StatelessWidget {
         '/settings': (_) => const SettingsPage(),
         '/chat': (_) => const ChatPage(),
         '/monitoring': (_) => const CameraMonitoringPage(),
+        '/body-simulation': (_) => const BodySimulationPage(),
         '/developer-tools': (_) => const DeveloperToolsPage(),
       },
       onGenerateRoute: (settings) {
