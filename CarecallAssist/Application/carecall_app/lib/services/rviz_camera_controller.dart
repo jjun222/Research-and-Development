@@ -25,8 +25,7 @@ class RvizCameraController {
 
   Timer? _sendTimer;
 
-  StreamSubscription<RvizControlConnectionState>?
-  _connectionStateSubscription;
+  StreamSubscription<RvizControlConnectionState>? _connectionStateSubscription;
 
   bool _started = false;
   bool _disposed = false;
@@ -40,7 +39,7 @@ class RvizCameraController {
   bool get isStarted => _started;
 
   bool get canAcceptCommands {
-    return _started && !_disposed && client.isConnected;
+    return _started && !_disposed && client.isReady;
   }
 
   void start() {
@@ -53,17 +52,13 @@ class RvizCameraController {
     _started = true;
     clearPendingCommands();
 
-    _connectionStateSubscription =
-        client.connectionStateStream.listen((state) {
-          if (state != RvizControlConnectionState.connected) {
-            clearPendingCommands();
-          }
-        });
+    _connectionStateSubscription = client.connectionStateStream.listen((state) {
+      if (state != RvizControlConnectionState.ready) {
+        clearPendingCommands();
+      }
+    });
 
-    _sendTimer = Timer.periodic(
-      sendInterval,
-      (_) => _flushPendingCommands(),
-    );
+    _sendTimer = Timer.periodic(sendInterval, (_) => _flushPendingCommands());
   }
 
   bool addRotationDelta({
@@ -93,8 +88,7 @@ class RvizCameraController {
       return false;
     }
 
-    final combinedZoom =
-        _pendingZoomMultiplier * zoomMultiplier;
+    final combinedZoom = _pendingZoomMultiplier * zoomMultiplier;
 
     if (!combinedZoom.isFinite || combinedZoom <= 0.0) {
       return false;
@@ -130,8 +124,7 @@ class RvizCameraController {
     _sendTimer?.cancel();
     _sendTimer = null;
 
-    final connectionStateSubscription =
-        _connectionStateSubscription;
+    final connectionStateSubscription = _connectionStateSubscription;
 
     _connectionStateSubscription = null;
 
@@ -157,7 +150,7 @@ class RvizCameraController {
       return;
     }
 
-    if (!client.isConnected) {
+    if (!client.isReady) {
       clearPendingCommands();
       return;
     }
@@ -191,9 +184,7 @@ class RvizCameraController {
 
   void _throwIfDisposed() {
     if (_disposed) {
-      throw StateError(
-        '이미 dispose된 RvizCameraController입니다.',
-      );
+      throw StateError('이미 dispose된 RvizCameraController입니다.');
     }
   }
 }
