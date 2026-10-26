@@ -20,9 +20,9 @@ class _BodySimulationPageState extends State<BodySimulationPage>
   static const double _pitchSensitivity = 0.003;
 
   // 실제 Jetson 연결 후 회전 방향이 반대라면
-  // 해당 값만 -1.0으로 변경하면 됩니다.
+  // 해당 방향 계수만 1.0과 -1.0 사이에서 변경합니다.
   static const double _yawSign = 1.0;
-  static const double _pitchSign = 1.0;
+  static const double _pitchSign = -1.0;
 
   late final RvizControlClient _controlClient;
   late final RvizCameraController _cameraController;
@@ -140,7 +140,7 @@ class _BodySimulationPageState extends State<BodySimulationPage>
     setState(() {
       _controlState = state;
 
-      if (state == RvizControlConnectionState.connected) {
+      if (state == RvizControlConnectionState.ready) {
         _controlError = null;
       }
     });
@@ -259,8 +259,7 @@ class _BodySimulationPageState extends State<BodySimulationPage>
     final streamUrl = AppConfig.simulationStreamUrl;
 
     final canControl =
-        _controlState ==
-            RvizControlConnectionState.connected &&
+        _controlState == RvizControlConnectionState.ready &&
         _cameraController.canAcceptCommands;
 
     return Scaffold(
@@ -362,16 +361,14 @@ class _BodySimulationPageState extends State<BodySimulationPage>
                               color: Colors.black,
                               child: Center(
                                 child: Column(
-                                  mainAxisSize:
-                                      MainAxisSize.min,
+                                  mainAxisSize: MainAxisSize.min,
                                   children: [
                                     CircularProgressIndicator(
                                       color: Colors.white,
                                     ),
                                     SizedBox(height: 16),
                                     Text(
-                                      '시뮬레이션 영상을 '
-                                      '불러오는 중입니다.',
+                                      '시뮬레이션 영상을 불러오는 중입니다.',
                                       style: TextStyle(
                                         color: Colors.white,
                                       ),
@@ -381,66 +378,43 @@ class _BodySimulationPageState extends State<BodySimulationPage>
                               ),
                             );
                           },
-                          error:
-                              (
-                                context,
-                                error,
-                                stackTrace,
-                              ) {
-                                return ColoredBox(
-                                  color: Colors.black87,
-                                  child: Center(
-                                    child: Padding(
-                                      padding:
-                                          const EdgeInsets.all(
-                                            20,
-                                          ),
-                                      child: Column(
-                                        mainAxisSize:
-                                            MainAxisSize.min,
-                                        children: [
-                                          const Icon(
-                                            Icons
-                                                .videocam_off_outlined,
-                                            color:
-                                                Colors.white70,
-                                            size: 48,
-                                          ),
-                                          const SizedBox(
-                                            height: 14,
-                                          ),
-                                          const Text(
-                                            '신체 시뮬레이션 영상을 '
-                                            '불러올 수 없습니다.\n'
-                                            'Jetson과 네트워크 상태를 '
-                                            '확인하세요.',
-                                            textAlign:
-                                                TextAlign.center,
-                                            style: TextStyle(
-                                              color:
-                                                  Colors.white,
-                                              height: 1.4,
-                                            ),
-                                          ),
-                                          const SizedBox(
-                                            height: 16,
-                                          ),
-                                          FilledButton.icon(
-                                            onPressed:
-                                                _reconnectStream,
-                                            icon: const Icon(
-                                              Icons.refresh,
-                                            ),
-                                            label: const Text(
-                                              '다시 연결',
-                                            ),
-                                          ),
-                                        ],
+                          error: (context, error, stackTrace) {
+                            return ColoredBox(
+                              color: Colors.black87,
+                              child: Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(20),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(
+                                        Icons.videocam_off_outlined,
+                                        color: Colors.white70,
+                                        size: 48,
                                       ),
-                                    ),
+                                      const SizedBox(height: 14),
+                                      const Text(
+                                        '신체 시뮬레이션 영상을 '
+                                        '불러올 수 없습니다.\n'
+                                        'Jetson과 네트워크 상태를 확인하세요.',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          height: 1.4,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      FilledButton.icon(
+                                        onPressed: _reconnectStream,
+                                        icon: const Icon(Icons.refresh),
+                                        label: const Text('다시 연결'),
+                                      ),
+                                    ],
                                   ),
-                                );
-                              },
+                                ),
+                              ),
+                            );
+                          },
                         ),
                       ),
                     ),
@@ -453,8 +427,7 @@ class _BodySimulationPageState extends State<BodySimulationPage>
                       8,
                     ),
                     child: Row(
-                      crossAxisAlignment:
-                          CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Icon(
                           Icons.touch_app_outlined,
@@ -504,15 +477,13 @@ class _BodySimulationPageState extends State<BodySimulationPage>
                         ),
                         IconButton.filledTonal(
                           tooltip: '줌 인',
-                          onPressed:
-                              canControl ? _zoomIn : null,
+                          onPressed: canControl ? _zoomIn : null,
                           icon: const Icon(Icons.add),
                         ),
                         const SizedBox(width: 8),
                         IconButton.filledTonal(
                           tooltip: '줌 아웃',
-                          onPressed:
-                              canControl ? _zoomOut : null,
+                          onPressed: canControl ? _zoomOut : null,
                           icon: const Icon(Icons.remove),
                         ),
                       ],
@@ -564,15 +535,15 @@ class _ControlStatusCard extends StatelessWidget {
     late final bool showRetryButton;
 
     switch (state) {
-      case RvizControlConnectionState.connected:
-        color = Colors.green;
+      case RvizControlConnectionState.disconnected:
+        color = Colors.grey;
         leading = const Icon(
-          Icons.check_circle_outline,
-          color: Colors.green,
+          Icons.link_off,
+          color: Colors.grey,
         );
-        title = '시뮬레이션 제어 연결됨';
-        description = '드래그, 핀치 및 줌 버튼을 사용할 수 있습니다.';
-        showRetryButton = false;
+        title = '현재 화면 제어를 사용할 수 없습니다.';
+        description = '제어 서버 연결이 끊어져 있습니다.';
+        showRetryButton = true;
 
       case RvizControlConnectionState.connecting:
         color = Colors.blue;
@@ -585,6 +556,29 @@ class _ControlStatusCard extends StatelessWidget {
         );
         title = '시뮬레이션 제어 연결 중';
         description = '제어 서버에 연결하고 있습니다.';
+        showRetryButton = false;
+
+      case RvizControlConnectionState.connectedWaitingReady:
+        color = Colors.blue;
+        leading = const SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(
+            strokeWidth: 2.5,
+          ),
+        );
+        title = '제어 서버 준비 확인 중';
+        description = 'WebSocket 연결 후 ready 메시지를 기다리고 있습니다.';
+        showRetryButton = false;
+
+      case RvizControlConnectionState.ready:
+        color = Colors.green;
+        leading = const Icon(
+          Icons.check_circle_outline,
+          color: Colors.green,
+        );
+        title = '시뮬레이션 제어 연결됨';
+        description = '드래그, 핀치 및 줌 버튼을 사용할 수 있습니다.';
         showRetryButton = false;
 
       case RvizControlConnectionState.reconnecting:
@@ -601,17 +595,7 @@ class _ControlStatusCard extends StatelessWidget {
         description = '잠시 후 다시 연결을 시도합니다.';
         showRetryButton = false;
 
-      case RvizControlConnectionState.disconnected:
-        color = Colors.grey;
-        leading = const Icon(
-          Icons.link_off,
-          color: Colors.grey,
-        );
-        title = '현재 화면 제어를 사용할 수 없습니다.';
-        description = '제어 서버 연결이 끊어져 있습니다.';
-        showRetryButton = true;
-
-      case RvizControlConnectionState.unavailable:
+      case RvizControlConnectionState.error:
         color = Colors.redAccent;
         leading = const Icon(
           Icons.error_outline,
@@ -653,9 +637,7 @@ class _ControlStatusCard extends StatelessWidget {
                       height: 1.35,
                     ),
                   ),
-                  if (errorMessage != null &&
-                      state !=
-                          RvizControlConnectionState.connected) ...[
+                  if (errorMessage != null) ...[
                     const SizedBox(height: 6),
                     Text(
                       errorMessage!,
