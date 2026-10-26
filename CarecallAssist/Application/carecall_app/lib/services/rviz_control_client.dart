@@ -1,19 +1,22 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 
 import '../models/rviz_camera_command.dart';
 
 enum RvizControlConnectionState {
   disconnected,
   connecting,
-  connected,
+  connectedWaitingReady,
+  ready,
   reconnecting,
-  unavailable,
+  error,
 }
 
-typedef RvizControlHeadersProvider =
-    FutureOr<Map<String, dynamic>> Function();
+typedef RvizControlHeadersProvider = FutureOr<Map<String, dynamic>> Function();
 
 class RvizControlClient {
   RvizControlClient({
@@ -144,9 +147,7 @@ class RvizControlClient {
     await _messageController.close();
   }
 
-  Future<void> _openConnection({
-    required bool isReconnect,
-  }) async {
+  Future<void> _openConnection({required bool isReconnect}) async {
     if (_disposed ||
         !_shouldStayConnected ||
         _isOpeningConnection ||
@@ -328,14 +329,11 @@ class RvizControlClient {
   void _startStableConnectionTimer(int generation) {
     _stableConnectionTimer?.cancel();
 
-    _stableConnectionTimer = Timer(
-      const Duration(seconds: 10),
-      () {
-        if (_isCurrentConnection(generation) && isConnected) {
-          _nextReconnectIndex = 0;
-        }
-      },
-    );
+    _stableConnectionTimer = Timer(const Duration(seconds: 10), () {
+      if (_isCurrentConnection(generation) && isConnected) {
+        _nextReconnectIndex = 0;
+      }
+    });
   }
 
   bool _isCurrentConnection(int generation) {
@@ -376,10 +374,7 @@ class RvizControlClient {
 
     if (socket != null) {
       try {
-        await socket.close(
-          WebSocketStatus.normalClosure,
-          'Client disconnect',
-        );
+        await socket.close(WebSocketStatus.normalClosure, 'Client disconnect');
       } catch (_) {
         // 이미 종료된 소켓은 추가로 처리할 필요가 없습니다.
       }
@@ -400,19 +395,13 @@ class RvizControlClient {
         !uri.hasScheme ||
         uri.host.isEmpty ||
         (uri.scheme != 'ws' && uri.scheme != 'wss')) {
-      throw ArgumentError.value(
-        value,
-        'url',
-        '올바른 ws 또는 wss 주소여야 합니다.',
-      );
+      throw ArgumentError.value(value, 'url', '올바른 ws 또는 wss 주소여야 합니다.');
     }
 
     return uri;
   }
 
-  static List<Duration> _normalizeReconnectDelays(
-    List<Duration>? values,
-  ) {
+  static List<Duration> _normalizeReconnectDelays(List<Duration>? values) {
     final delays =
         values ??
         const <Duration>[
