@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_mjpeg/flutter_mjpeg.dart';
 
 import '../../../services/app_config.dart';
@@ -21,8 +22,8 @@ class _BodySimulationPageState extends State<BodySimulationPage>
 
   // 실제 Jetson 연결 후 회전 방향이 반대라면
   // 해당 방향 계수만 1.0과 -1.0 사이에서 변경합니다.
-  static const double _yawSign = 1.0;
-  static const double _pitchSign = -1.0;
+  static const double _yawSign = -1.0;
+  static const double _pitchSign = 1.0;
 
   late final RvizControlClient _controlClient;
   late final RvizCameraController _cameraController;
@@ -41,6 +42,10 @@ class _BodySimulationPageState extends State<BodySimulationPage>
 
   int _previousPointerCount = 0;
   double _previousScale = 1.0;
+
+  final ScrollController _scrollController = ScrollController();
+
+  bool _isFullscreen = false;
 
   @override
   void initState() {
@@ -73,6 +78,8 @@ class _BodySimulationPageState extends State<BodySimulationPage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
 
+    _scrollController.dispose();
+    unawaited(_restoreSystemUi());
     unawaited(_disposeControlResources());
 
     super.dispose();
@@ -107,6 +114,10 @@ class _BodySimulationPageState extends State<BodySimulationPage>
 
         _reconnectStream();
         _resumeControl();
+
+        if (_isFullscreen) {
+          unawaited(_enableFullscreenSystemUi());
+        }
 
       case AppLifecycleState.inactive:
       case AppLifecycleState.hidden:
@@ -177,6 +188,45 @@ class _BodySimulationPageState extends State<BodySimulationPage>
     setState(() {
       _streamGeneration += 1;
     });
+  }
+
+  void _enterFullscreen() {
+    if (!mounted || _isFullscreen) {
+      return;
+    }
+
+    setState(() {
+      _isFullscreen = true;
+    });
+
+    unawaited(_enableFullscreenSystemUi());
+  }
+
+  Future<void> _exitFullscreen() async {
+    if (!_isFullscreen) {
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _isFullscreen = false;
+      });
+    }
+
+    await _restoreSystemUi();
+  }
+
+  Future<void> _enableFullscreenSystemUi() async {
+    await SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.immersiveSticky,
+    );
+  }
+
+  Future<void> _restoreSystemUi() async {
+    await SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.manual,
+      overlays: SystemUiOverlay.values,
+    );
   }
 
   void _handleScaleStart(ScaleStartDetails details) {
@@ -254,6 +304,145 @@ class _BodySimulationPageState extends State<BodySimulationPage>
     _cameraController.zoomOut();
   }
 
+  Widget _buildFullscreenView({
+    required String streamUrl,
+    required bool canControl,
+  }) {
+    return ColoredBox(
+      color: Colors.black,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onScaleStart: canControl ? _handleScaleStart : null,
+            onScaleUpdate: canControl ? _handleScaleUpdate : null,
+            onScaleEnd: canControl ? _handleScaleEnd : null,
+            child: ColoredBox(
+              color: Colors.black,
+              child: Mjpeg(
+                key: ValueKey(
+                  '$streamUrl#$_streamGeneration#fullscreen',
+                ),
+                stream: streamUrl,
+                isLive: true,
+                fit: BoxFit.contain,
+                timeout: const Duration(seconds: 10),
+                loading: (context) {
+                  return const ColoredBox(
+                    color: Colors.black,
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircularProgressIndicator(
+                            color: Colors.white,
+                          ),
+                          SizedBox(height: 16),
+                          Text(
+                            '시뮬레이션 영상을 불러오는 중입니다.',
+                            style: TextStyle(
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+                error: (context, error, stackTrace) {
+                  return ColoredBox(
+                    color: Colors.black,
+                    child: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.videocam_off_outlined,
+                              color: Colors.white70,
+                              size: 48,
+                            ),
+                            const SizedBox(height: 14),
+                            const Text(
+                              '신체 시뮬레이션 영상을 불러올 수 없습니다.\n'
+                              'Jetson과 네트워크 상태를 확인하세요.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Colors.white,
+                                height: 1.4,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            FilledButton.icon(
+                              onPressed: _reconnectStream,
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('영상 다시 연결'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Align(
+              alignment: Alignment.topRight,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton.filled(
+                      tooltip: '전체 화면 종료',
+                      onPressed: () {
+                        unawaited(_exitFullscreen());
+                      },
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.black54,
+                        foregroundColor: Colors.white,
+                      ),
+                      icon: const Icon(Icons.fullscreen_exit),
+                    ),
+                    const SizedBox(width: 8),
+                    const _LiveBadge(),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (!canControl)
+            SafeArea(
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: Container(
+                  margin: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 9,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Text(
+                    '제어 서버 연결을 기다리고 있습니다.',
+                    style: TextStyle(
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final streamUrl = AppConfig.simulationStreamUrl;
@@ -261,6 +450,24 @@ class _BodySimulationPageState extends State<BodySimulationPage>
     final canControl =
         _controlState == RvizControlConnectionState.ready &&
         _cameraController.canAcceptCommands;
+
+    if (_isFullscreen) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop) {
+            unawaited(_exitFullscreen());
+          }
+        },
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: _buildFullscreenView(
+            streamUrl: streamUrl,
+            canControl: canControl,
+          ),
+        ),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -275,6 +482,7 @@ class _BodySimulationPageState extends State<BodySimulationPage>
       ),
       body: SafeArea(
         child: ListView(
+          controller: _scrollController,
           padding: const EdgeInsets.all(16),
           children: [
             const Card(
@@ -314,8 +522,8 @@ class _BodySimulationPageState extends State<BodySimulationPage>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(
                       16,
                       16,
                       16,
@@ -323,7 +531,7 @@ class _BodySimulationPageState extends State<BodySimulationPage>
                     ),
                     child: Row(
                       children: [
-                        Expanded(
+                        const Expanded(
                           child: Text(
                             '실시간 신체 시뮬레이션',
                             style: TextStyle(
@@ -332,7 +540,13 @@ class _BodySimulationPageState extends State<BodySimulationPage>
                             ),
                           ),
                         ),
-                        _LiveBadge(),
+                        IconButton(
+                          tooltip: '전체 화면',
+                          onPressed: _enterFullscreen,
+                          icon: const Icon(Icons.fullscreen),
+                        ),
+                        const SizedBox(width: 4),
+                        const _LiveBadge(),
                       ],
                     ),
                   ),
