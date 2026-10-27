@@ -1,20 +1,12 @@
-"""CareCall chest UDP-to-MQTT gateway for Raspberry Pi Pico 2 W.
-
-This version:
-  * reads the chest BNO085 on I2C0 (SDA GP4, SCL GP5),
-  * receives right/left arm and leg IMU packets over UDP,
-  * calculates each limb orientation relative to the chest,
-  * calibrates the first valid relative orientation as the neutral pose,
-  * recalibrates every limb when the GP16 button is pressed,
-  * calculates roll/pitch/yaw change and a unit direction vector,
-  * keeps at most 20 packets per sensor in RAM,
-  * forwards the enriched packets to jetson.local by MQTT.
-
-It intentionally does not calculate hand/foot positions or body-length-based
-coordinates.
+"""CareCall Body raw relay for Jetson relative calculations.
+Device IDs, pins, topics and sampling intervals are preserved.
+Network deadlines, bounded sensor polling and recovery are enabled.
+GP16 forwards calibration epochs; limb packets include a raw chest reference.
+Relative quaternion, angle and direction math executes only on Jetson.
 """
 
 import gc
+import sys
 import machine
 import math
 import network
@@ -24,10 +16,11 @@ import ubinascii
 import ujson
 
 from machine import I2C, Pin
-from umqtt.simple import MQTTClient
+from umqtt.simple import MQTTClient, CARECALL_MQTT_VERSION
 
 from bno08x import (
     BNO08X,
+    CARECALL_BNO_VERSION,
     BNO_REPORT_ACCELEROMETER,
     BNO_REPORT_GAME_ROTATION_VECTOR,
     BNO_REPORT_GYROSCOPE,
@@ -44,7 +37,7 @@ CHEST_I2C_ID = 0
 CHEST_BNO085_SDA_PIN = 4
 CHEST_BNO085_SCL_PIN = 5
 CHEST_BNO085_I2C_FREQ = 100_000
-CHEST_BNO085_I2C_TIMEOUT_US = 100_000
+CHEST_BNO085_I2C_TIMEOUT_US = 200_000
 
 CHEST_ACCEL_REPORT_HZ = 20
 CHEST_GYRO_REPORT_HZ = 20
@@ -119,6 +112,85 @@ except Exception:
 # ---------------------------------------------------------------------------
 # General helpers
 # ---------------------------------------------------------------------------
+# CareCall Jetson relative-rotation relay v1.
+JETSON_CALIBRATION_EPOCH = 0
+JETSON_LIMB_CALIBRATION_EPOCH = {}
+JETSON_IMU_MAX_QUEUE_MS = 1000
+
+
+TRACE_ENABLED = False
+watchdog = None
+last_stage = "boot"
+flush_cursor = 0
+last_dns_attempt_ms = None
+cached_broker_ip = None
+network_failure_count = 0
+last_radio_reset_ms = None
+buffer_stats = {d: {"sent": 0, "expired": 0, "superseded": 0, "overflow": 0}
+                for d in SENSOR_DEVICES}
+
+
+def stage(name):
+    global last_stage
+    last_stage = name
+    if TRACE_ENABLED:
+        print("[STAGE]", name)
+
+
+def feed_watchdog():
+    if watchdog is not None:
+        watchdog.feed()
+
+
+def report_error(label, error):
+    print("[ERROR] {} stage={} error={}".format(label, last_stage, error))
+    sys.print_exception(error)
+
+
+def local_tasks():
+    # Called by Wi-Fi provisioning between its bounded network operations.
+    poll_calibration_button(time.ticks_ms())
+    stage("bno_poll")
+    poll_chest_imu(time.ticks_ms())
+    feed_watchdog()
+    stage("wifi_wait")
+
+
+def close_network_socket(sock):
+    if sock is not None:
+        try:
+            sock.close()
+        except OSError:
+            pass
+
+
+def maybe_reset_radio():
+    global last_radio_reset_ms, network_failure_count
+    if network_failure_count < 6:
+        return
+    now = time.ticks_ms()
+    if (last_radio_reset_ms is not None and
+            time.ticks_diff(now, last_radio_reset_ms) < 60000):
+        return
+    last_radio_reset_ms = now
+    network_failure_count = 0
+    print("[WIFI RECOVERY] repeated MQTT failures; restarting WLAN")
+    reset_mqtt()
+    wlan.active(False)
+    started = time.ticks_ms()
+    while time.ticks_diff(time.ticks_ms(), started) < WIFI_RESET_OFF_MS:
+        local_tasks()
+        time.sleep_ms(20)
+    # run() closes old UDP sockets and reconnects with saved credentials.
+
+
+def expired_imu(item, now):
+    if not item["topic"].endswith("/imu"):
+        return False
+    age = time.ticks_diff(now, item["queued_at_ms"])
+    return age < 0 or age > JETSON_IMU_MAX_QUEUE_MS
+
+
 def set_led(on):
     if led is not None:
         led.value(1 if on else 0)
@@ -135,15 +207,10 @@ def next_chest_sequence():
 
 
 def make_boot_id():
-    try:
-        random_part = ubinascii.hexlify(machine.unique_id()).decode("utf-8")
-    except Exception:
-        random_part = "pico"
-
-    return "{}-{:08x}".format(
-        random_part,
-        time.ticks_ms() & 0xFFFFFFFF,
-    )
+    import os
+    unique = ubinascii.hexlify(machine.unique_id()).decode()
+    random = ubinascii.hexlify(os.urandom(8)).decode()
+    return unique + "-" + random
 
 
 CHEST_BOOT_ID = make_boot_id()
@@ -257,6 +324,9 @@ def quaternion_from_message(message):
 
 
 def reset_orientation_reference(device_id, reason):
+    JETSON_LIMB_CALIBRATION_EPOCH[device_id] = (
+        JETSON_LIMB_CALIBRATION_EPOCH.get(device_id, 0) + 1
+    )
     if device_id in orientation_references:
         del orientation_references[device_id]
 
@@ -269,6 +339,8 @@ def reset_orientation_reference(device_id, reason):
 
 
 def reset_all_orientation_references(reason):
+    global JETSON_CALIBRATION_EPOCH
+    JETSON_CALIBRATION_EPOCH += 1
     orientation_references.clear()
     print("[CALIBRATION RESET] all limbs reason={}".format(reason))
 
@@ -309,159 +381,81 @@ def poll_calibration_button(now_ms):
 def chest_imu_is_fresh(now_ms):
     if latest_chest_imu is None:
         return False
-
-    age_ms = time.ticks_diff(
-        now_ms,
-        latest_chest_imu["sampled_at_ms"],
-    )
-
-    return age_ms <= CHEST_IMU_STALE_MS
+    age = time.ticks_diff(now_ms, latest_chest_imu["sampled_at_ms"])
+    return 0 <= age <= CHEST_IMU_STALE_MS
 
 
 def add_relative_orientation(message, now_ms):
-    """Add chest-relative direction and pose-change fields to a limb packet."""
+    """Copy raw chest reference; all relative math runs on Jetson."""
     device_id = message["device_id"]
-
-    if not chest_imu_is_fresh(now_ms):
-        message["orientation_valid"] = 0
-        message["orientation_error"] = "chest_imu_unavailable"
+    for key in list(message):
+        if (key.startswith("relative_q") or key.startswith("change_")
+                or key.startswith("direction_")
+                or key in ("neutral_calibrated_now", "orientation_error")):
+            del message[key]
+    message["jetson_relay_version"] = 1
+    message["calculation_mode"] = "jetson"
+    message["gateway_boot_id"] = CHEST_BOOT_ID
+    message["gateway_calibration_epoch"] = JETSON_CALIBRATION_EPOCH
+    message["limb_calibration_epoch"] = JETSON_LIMB_CALIBRATION_EPOCH.get(device_id, 0)
+    message["raw_orientation_valid"] = 1
+    # A legacy bridge must not mistake an uncomputed orientation for a result.
+    message["orientation_valid"] = 0
+    message["orientation_frame"] = "sensor_raw"
+    reference = {"valid": 0}
+    message["chest_reference"] = reference
+    if latest_chest_imu is None:
+        reference["reason"] = "chest_imu_unavailable"
         return False
-
-    try:
-        chest_quaternion = latest_chest_imu["quaternion"]
-        limb_quaternion = quaternion_from_message(message)
-
-        # Limb orientation expressed in the current chest coordinate frame.
-        relative_quaternion = quaternion_multiply(
-            quaternion_conjugate(chest_quaternion),
-            limb_quaternion,
-        )
-
-        reference = orientation_references.get(device_id)
-        calibrated_now = False
-
-        if reference is None:
-            reference = relative_quaternion
-            orientation_references[device_id] = reference
-            calibrated_now = True
-
-        # Change from the automatically captured neutral pose.
-        change_quaternion = quaternion_multiply(
-            relative_quaternion,
-            quaternion_conjugate(reference),
-        )
-
-        roll_deg, pitch_deg, yaw_deg = quaternion_to_euler_degrees(
-            change_quaternion
-        )
-
-        direction_x, direction_y, direction_z = rotate_vector(
-            change_quaternion,
-            NEUTRAL_LIMB_DIRECTION,
-        )
-
-        message["orientation_valid"] = 1
-        message["orientation_frame"] = "chest"
-        message["neutral_calibrated_now"] = 1 if calibrated_now else 0
-
-        message["relative_qx"] = rounded(relative_quaternion[0])
-        message["relative_qy"] = rounded(relative_quaternion[1])
-        message["relative_qz"] = rounded(relative_quaternion[2])
-        message["relative_qw"] = rounded(relative_quaternion[3])
-
-        message["change_roll_deg"] = rounded(roll_deg)
-        message["change_pitch_deg"] = rounded(pitch_deg)
-        message["change_yaw_deg"] = rounded(yaw_deg)
-
-        # Unit vector in the chest frame. It indicates direction only and is
-        # not a hand/foot position or distance.
-        message["direction_x"] = rounded(direction_x)
-        message["direction_y"] = rounded(direction_y)
-        message["direction_z"] = rounded(direction_z)
-
-        if "orientation_error" in message:
-            del message["orientation_error"]
-
-        if calibrated_now:
-            print(
-                "[CALIBRATION] {} neutral pose captured".format(
-                    device_id
-                )
-            )
-
-        return True
-
-    except Exception as error:
-        message["orientation_valid"] = 0
-        message["orientation_error"] = str(error)
-        print(
-            "[ORIENTATION] device={} error={}".format(
-                device_id,
-                error,
-            )
-        )
+    age_ms = time.ticks_diff(now_ms, latest_chest_imu["sampled_at_ms"])
+    reference["sample_age_ms"] = age_ms
+    if age_ms < 0 or age_ms > CHEST_IMU_STALE_MS:
+        reference["reason"] = "chest_imu_stale"
         return False
+    q = latest_chest_imu["quaternion"]
+    reference["qx"], reference["qy"], reference["qz"], reference["qw"] = q
+    reference["valid"] = 1
+    return True
 
 
 # ---------------------------------------------------------------------------
 # Chest BNO085
 # ---------------------------------------------------------------------------
 def initialize_chest_bno085():
-    i2c = I2C(
-        CHEST_I2C_ID,
-        sda=Pin(CHEST_BNO085_SDA_PIN),
-        scl=Pin(CHEST_BNO085_SCL_PIN),
-        freq=CHEST_BNO085_I2C_FREQ,
-        timeout=CHEST_BNO085_I2C_TIMEOUT_US,
-    )
-
+    stage("bno_init")
+    feed_watchdog()
+    i2c = I2C(CHEST_I2C_ID, sda=Pin(CHEST_BNO085_SDA_PIN),
+              scl=Pin(CHEST_BNO085_SCL_PIN), freq=CHEST_BNO085_I2C_FREQ,
+              timeout=CHEST_BNO085_I2C_TIMEOUT_US)
     addresses = i2c.scan()
-    print("[CHEST I2C] found:", [hex(address) for address in addresses])
-
-    if 0x4A not in addresses and 0x4B not in addresses:
+    print("[CHEST I2C] found:", [hex(a) for a in addresses])
+    if not any(a in addresses for a in (0x4A, 0x4B)):
         raise RuntimeError("chest BNO085 not found at 0x4A or 0x4B")
-
     bno = BNO08X(i2c, debug=False)
-    bno.enable_feature(
-        BNO_REPORT_ACCELEROMETER,
-        CHEST_ACCEL_REPORT_HZ,
-    )
-    bno.enable_feature(
-        BNO_REPORT_GYROSCOPE,
-        CHEST_GYRO_REPORT_HZ,
-    )
-    bno.enable_feature(
-        BNO_REPORT_GAME_ROTATION_VECTOR,
-        CHEST_QUATERNION_REPORT_HZ,
-    )
-    bno.set_quaternion_euler_vector(
-        BNO_REPORT_GAME_ROTATION_VECTOR
-    )
-
-    print("[CHEST BNO085] initialized")
+    feed_watchdog()
+    for report, rate in ((BNO_REPORT_ACCELEROMETER, CHEST_ACCEL_REPORT_HZ),
+                         (BNO_REPORT_GYROSCOPE, CHEST_GYRO_REPORT_HZ),
+                         (BNO_REPORT_GAME_ROTATION_VECTOR, CHEST_QUATERNION_REPORT_HZ)):
+        bno.enable_feature(report, rate)
+        feed_watchdog()
+    bno.set_quaternion_euler_vector(BNO_REPORT_GAME_ROTATION_VECTOR)
+    print("[CHEST BNO085] bounded driver initialized")
     return bno
 
 
 def read_chest_imu(bno, sampled_at_ms):
-    # The supplied driver returns quaternion in x, y, z, w order.
-    quaternion = quaternion_normalize(bno.quaternion)
-    gx, gy, gz = bno.gyro
-    ax, ay, az = bno.acc
-
-    return {
-        "quaternion": quaternion,
-        "qx": rounded(quaternion[0]),
-        "qy": rounded(quaternion[1]),
-        "qz": rounded(quaternion[2]),
-        "qw": rounded(quaternion[3]),
-        "gx": rounded(gx),
-        "gy": rounded(gy),
-        "gz": rounded(gz),
-        "ax": rounded(ax),
-        "ay": rounded(ay),
-        "az": rounded(az),
-        "sampled_at_ms": sampled_at_ms,
-    }
+    bno.poll(max_packets=8, max_time_ms=25)
+    q, received_ms = bno.sample(BNO_REPORT_GAME_ROTATION_VECTOR, CHEST_IMU_STALE_MS)
+    gyro, _ = bno.sample(BNO_REPORT_GYROSCOPE, CHEST_IMU_STALE_MS)
+    acc, _ = bno.sample(BNO_REPORT_ACCELEROMETER, CHEST_IMU_STALE_MS)
+    quaternion = quaternion_normalize(q)
+    values = tuple(quaternion) + tuple(gyro) + tuple(acc)
+    if any(not math.isfinite(value) for value in values):
+        raise ValueError("Non-finite chest IMU")
+    result = {"quaternion": quaternion, "sampled_at_ms": received_ms}
+    for name, value in zip(("qx", "qy", "qz", "qw", "gx", "gy", "gz", "ax", "ay", "az"), values):
+        result[name] = rounded(value)
+    return result
 
 
 def ensure_chest_bno(now_ms):
@@ -492,7 +486,7 @@ def ensure_chest_bno(now_ms):
 
 
 def build_chest_imu_message(imu):
-    return {
+    message = {
         "schema_version": SCHEMA_VERSION,
         "type": "sensor_data",
         "topic": CHEST_IMU_TOPIC,
@@ -513,6 +507,12 @@ def build_chest_imu_message(imu):
         "az": imu["az"],
     }
 
+    message["jetson_relay_version"] = 1
+    message["raw_orientation_valid"] = 1
+    message["gateway_boot_id"] = CHEST_BOOT_ID
+    message["gateway_calibration_epoch"] = JETSON_CALIBRATION_EPOCH
+    return message
+
 
 def poll_chest_imu(now_ms):
     global chest_bno
@@ -530,6 +530,7 @@ def poll_chest_imu(now_ms):
     ):
         return
 
+    now_ms = time.ticks_ms()
     last_chest_imu_read_ms = now_ms
 
     try:
@@ -553,6 +554,7 @@ def poll_chest_imu(now_ms):
 
         return
 
+    now_ms = time.ticks_ms()
     if (
         time.ticks_diff(now_ms, last_chest_imu_publish_ms)
         < CHEST_IMU_PUBLISH_INTERVAL_MS
@@ -569,16 +571,16 @@ def poll_chest_imu(now_ms):
 # Wi-Fi and MQTT
 # ---------------------------------------------------------------------------
 def connect_wifi():
-    credentials = connect_wifi_forever(wlan)
-    network_config = wlan.ifconfig()
-    print(
-        "[WIFI] ready ssid={} ip={} gateway={}".format(
-            credentials["ssid"],
-            network_config[0],
-            network_config[2],
-        )
-    )
+    global cached_broker_ip, last_dns_attempt_ms
+    stage("wifi_connect")
+    credentials = connect_wifi_forever(wlan, idle_callback=local_tasks)
+    cached_broker_ip = None
+    last_dns_attempt_ms = None
+    address = wlan.ifconfig()
+    print("[WIFI] ready ssid={} ip={} gateway={}".format(
+        credentials["ssid"], address[0], address[2]))
     set_led(True)
+    feed_watchdog()
 
 
 def mqtt_status_payload(status):
@@ -598,103 +600,95 @@ def mqtt_status_payload(status):
 
 def reset_mqtt():
     global mqtt_client
-
-    if mqtt_client is not None:
-        try:
-            mqtt_client.disconnect()
-        except Exception:
-            pass
-
-    mqtt_client = None
+    client, mqtt_client = mqtt_client, None
+    # Never write DISCONNECT or an offline PUBLISH over a failed connection.
+    # The broker's existing Last Will reports ungraceful disconnection.
+    if client is not None:
+        client.close()
 
 
 def connect_mqtt():
-    global mqtt_client
-    global last_mqtt_ping_ms
-
-    address = socket.getaddrinfo(
-        JETSON_HOST,
-        MQTT_PORT,
-        0,
-        socket.SOCK_STREAM,
-    )[0][-1]
-
-    broker_ip = address[0]
-    client_id = (
-        b"chest_pico-"
-        + ubinascii.hexlify(machine.unique_id())
-    )
-    status_topic = "device/{}/status".format(GATEWAY_ID).encode("utf-8")
-
-    client = MQTTClient(
-        client_id,
-        broker_ip,
-        port=MQTT_PORT,
-        user=MQTT_USER,
-        password=MQTT_PASSWORD,
-        keepalive=MQTT_KEEPALIVE,
-    )
-
-    client.set_last_will(
-        status_topic,
-        mqtt_status_payload("offline"),
-        retain=True,
-        qos=1,
-    )
-    client.connect(clean_session=True)
-    client.publish(
-        status_topic,
-        mqtt_status_payload("online"),
-        retain=True,
-        qos=1,
-    )
-
+    global mqtt_client, last_mqtt_ping_ms, cached_broker_ip
+    global last_dns_attempt_ms, network_failure_count
+    now = time.ticks_ms()
+    if cached_broker_ip is None:
+        if (last_dns_attempt_ms is not None and
+                time.ticks_diff(now, last_dns_attempt_ms) < MQTT_RESOLVE_RETRY_MS):
+            return False
+        last_dns_attempt_ms = now
+        stage("mqtt_dns")
+        print("[MQTT DNS] resolving", JETSON_HOST)
+        feed_watchdog()
+        cached_broker_ip = socket.getaddrinfo(
+            JETSON_HOST, MQTT_PORT, 0, socket.SOCK_STREAM)[0][-1][0]
+    client = MQTTClient(b"chest_pico-" + ubinascii.hexlify(machine.unique_id()),
+                        cached_broker_ip, port=MQTT_PORT, user=MQTT_USER,
+                        password=MQTT_PASSWORD, keepalive=MQTT_KEEPALIVE)
+    status_topic = "device/{}/status".format(GATEWAY_ID).encode()
+    client.set_last_will(status_topic, mqtt_status_payload("offline"), retain=True, qos=1)
+    try:
+        stage("mqtt_connect")
+        print("[MQTT CONNECT] {}:{}".format(cached_broker_ip, MQTT_PORT))
+        client.connect(clean_session=True, timeout=MQTT_CONNECT_TIMEOUT_SECONDS)
+        feed_watchdog()
+        client.set_timeout(MQTT_SOCKET_TIMEOUT_SECONDS)
+        stage("mqtt_online_ack")
+        client.publish(status_topic, mqtt_status_payload("online"), retain=True, qos=1)
+    except BaseException:
+        client.close()
+        cached_broker_ip = None
+        raise
     mqtt_client = client
     last_mqtt_ping_ms = time.ticks_ms()
-    print("[MQTT] connected {}:{}".format(broker_ip, MQTT_PORT))
+    network_failure_count = 0
+    print("[MQTT] connected {}:{}".format(cached_broker_ip, MQTT_PORT))
+    feed_watchdog()
+    return True
 
 
 def ensure_mqtt():
-    global last_mqtt_attempt_ms
-
+    global last_mqtt_attempt_ms, network_failure_count
     if mqtt_client is not None:
         return True
-
-    now_ms = time.ticks_ms()
-
-    if last_mqtt_attempt_ms is not None:
-        elapsed_ms = time.ticks_diff(now_ms, last_mqtt_attempt_ms)
-        if elapsed_ms < MQTT_RETRY_MS:
-            return False
-
-    last_mqtt_attempt_ms = now_ms
-
+    if not wlan.isconnected():
+        return False
+    now = time.ticks_ms()
+    if (last_mqtt_attempt_ms is not None and
+            time.ticks_diff(now, last_mqtt_attempt_ms) < MQTT_RETRY_MS):
+        return False
+    last_mqtt_attempt_ms = now
     try:
-        connect_mqtt()
-        return True
+        return connect_mqtt()
     except Exception as error:
-        print("[MQTT] connection failed: {}".format(error))
+        network_failure_count += 1
+        report_error("MQTT connection", error)
         reset_mqtt()
         return False
 
 
 def maintain_mqtt():
-    global last_mqtt_ping_ms
-
+    global last_mqtt_ping_ms, network_failure_count
     if not ensure_mqtt():
         return
-
-    now_ms = time.ticks_ms()
-    elapsed_ms = time.ticks_diff(now_ms, last_mqtt_ping_ms)
-
-    if elapsed_ms < MQTT_PING_MS:
-        return
-
     try:
-        mqtt_client.ping()
-        last_mqtt_ping_ms = now_ms
+        stage("mqtt_receive")
+        # A finite number of inbound packets per loop.
+        for _ in range(4):
+            if mqtt_client.check_msg() is None:
+                break
+            feed_watchdog()
+        now = time.ticks_ms()
+        pending = mqtt_client.ping_outstanding_ms
+        if pending is not None:
+            if time.ticks_diff(now, pending) > int(MQTT_SOCKET_TIMEOUT_SECONDS * 1000):
+                raise OSError(110, "No MQTT PINGRESP")
+        elif time.ticks_diff(now, last_mqtt_ping_ms) >= MQTT_PING_MS:
+            stage("mqtt_ping")
+            mqtt_client.ping()
+            last_mqtt_ping_ms = time.ticks_ms()
     except Exception as error:
-        print("[MQTT] ping failed: {}".format(error))
+        network_failure_count += 1
+        report_error("MQTT maintenance", error)
         reset_mqtt()
 
 
@@ -713,58 +707,77 @@ def mqtt_options(topic):
 # ---------------------------------------------------------------------------
 def add_to_buffer(device_id, topic, message):
     qos, retain = mqtt_options(topic)
-    item = {
-        "topic": topic,
-        "payload": ujson.dumps(message).encode("utf-8"),
-        "qos": qos,
-        "retain": retain,
-        "sent": False,
-    }
-
-    device_buffer = buffers[device_id]
-    device_buffer.append(item)
-
-    if len(device_buffer) > BUFFER_LIMIT:
-        dropped = device_buffer.pop(0)
-        dropped_state = "sent" if dropped["sent"] else "unsent"
-        print(
-            "[BUFFER DROP] device={} oldest={} state={}".format(
-                device_id,
-                dropped["topic"],
-                dropped_state,
-            )
-        )
+    pending = buffers[device_id]
+    stats = buffer_stats[device_id]
+    now = time.ticks_ms()
+    for index in range(len(pending) - 1, -1, -1):
+        if expired_imu(pending[index], now):
+            pending.pop(index)
+            stats["expired"] += 1
+    # IMU/heartbeat/status describe current state; keep their newest value.
+    # Shock events remain a FIFO and are never coalesced.
+    if not topic.endswith("/shock"):
+        for index in range(len(pending) - 1, -1, -1):
+            if pending[index]["topic"] == topic:
+                pending.pop(index)
+                stats["superseded"] += 1
+    if len(pending) >= BUFFER_LIMIT:
+        index = None
+        for candidate in range(len(pending)):
+            if not pending[candidate]["topic"].endswith("/shock"):
+                index = candidate
+                break
+        if index is None and not topic.endswith("/shock"):
+            stats["overflow"] += 1
+            print("[QUEUE OVERFLOW] {} rejected={}".format(device_id, topic))
+            return
+        if index is None:
+            index = 0
+        removed = pending.pop(index)
+        stats["overflow"] += 1
+        print("[QUEUE OVERFLOW] {} removed={}".format(device_id, removed["topic"]))
+    pending.append({"topic": topic, "message": dict(message), "qos": qos,
+                    "retain": retain, "queued_at_ms": now, "sent": False})
 
 
 def flush_buffers():
-    if not ensure_mqtt():
+    global flush_cursor, network_failure_count
+    if mqtt_client is None:
         return
-
     sent_count = 0
-
-    for device_id in SENSOR_DEVICES:
-        for item in buffers[device_id]:
-            if item["sent"]:
-                continue
-
-            if sent_count >= MQTT_FLUSH_PER_LOOP:
-                return
-
-            try:
-                mqtt_client.publish(
-                    item["topic"].encode("utf-8"),
-                    item["payload"],
-                    retain=item["retain"],
-                    qos=item["qos"],
-                )
-            except Exception as error:
-                print("[MQTT] publish failed: {}".format(error))
-                reset_mqtt()
-                return
-
-            item["sent"] = True
-            sent_count += 1
-            print("[MQTT TX] {} {}".format(device_id, item["topic"]))
+    checked = 0
+    while sent_count < MQTT_FLUSH_PER_LOOP and checked < len(SENSOR_DEVICES):
+        device_id = SENSOR_DEVICES[flush_cursor]
+        flush_cursor = (flush_cursor + 1) % len(SENSOR_DEVICES)
+        checked += 1
+        pending = buffers[device_id]
+        now = time.ticks_ms()
+        for index in range(len(pending) - 1, -1, -1):
+            if expired_imu(pending[index], now):
+                pending.pop(index)
+                buffer_stats[device_id]["expired"] += 1
+        if not pending:
+            continue
+        item = pending[0]
+        try:
+            message = item["message"]
+            if item["topic"].endswith("/imu"):
+                message["gateway_queue_age_ms"] = time.ticks_diff(
+                    time.ticks_ms(), item["queued_at_ms"])
+            payload = ujson.dumps(message).encode()
+            stage("mqtt_publish:{}:qos{}".format(item["topic"], item["qos"]))
+            mqtt_client.publish(item["topic"].encode(), payload,
+                                retain=item["retain"], qos=item["qos"])
+        except Exception as error:
+            network_failure_count += 1
+            report_error("MQTT publish", error)
+            reset_mqtt()
+            return
+        pending.pop(0)
+        buffer_stats[device_id]["sent"] += 1
+        sent_count += 1
+        print("[MQTT TX] {} {}".format(device_id, item["topic"]))
+        feed_watchdog()
 
 
 # ---------------------------------------------------------------------------
@@ -789,9 +802,12 @@ def open_udp(port):
 
 def read_json(raw, source):
     try:
-        return ujson.loads(raw.decode("utf-8"))
+        message = ujson.loads(raw.decode("utf-8"))
+        if not isinstance(message, dict):
+            raise ValueError("UDP JSON must be an object")
+        return message
     except Exception as error:
-        print("[DROP] bad JSON from {}: {}".format(source[0], error))
+        print("[DROP] invalid JSON from {}: {}".format(source[0], error))
         return None
 
 
@@ -875,60 +891,11 @@ def print_chest_imu(message):
 
 
 def print_limb_imu(message):
-    device_id = message["device_id"]
-
-    print(
-        "[RX IMU] device={} seq={} "
-        "q=({:.4f},{:.4f},{:.4f},{:.4f}) "
-        "gyro=({:.3f},{:.3f},{:.3f}) "
-        "acc=({:.3f},{:.3f},{:.3f}) shock={}".format(
-            device_id,
-            message.get("sequence", -1),
-            float(message.get("qx", 0.0)),
-            float(message.get("qy", 0.0)),
-            float(message.get("qz", 0.0)),
-            float(message.get("qw", 0.0)),
-            float(message.get("gx", 0.0)),
-            float(message.get("gy", 0.0)),
-            float(message.get("gz", 0.0)),
-            float(message.get("ax", 0.0)),
-            float(message.get("ay", 0.0)),
-            float(message.get("az", 0.0)),
-            int(message.get("shock", 0)),
-        )
-    )
-
-    if message.get("orientation_valid") == 1:
-        print(
-            "  chest_relative_q=({:.4f},{:.4f},{:.4f},{:.4f}) "
-            "change_deg=(roll={:.2f},pitch={:.2f},yaw={:.2f})".format(
-                message["relative_qx"],
-                message["relative_qy"],
-                message["relative_qz"],
-                message["relative_qw"],
-                message["change_roll_deg"],
-                message["change_pitch_deg"],
-                message["change_yaw_deg"],
-            )
-        )
-        print(
-            "  direction=({:.4f},{:.4f},{:.4f}) "
-            "buffer={}/{}".format(
-                message["direction_x"],
-                message["direction_y"],
-                message["direction_z"],
-                len(buffers[device_id]),
-                BUFFER_LIMIT,
-            )
-        )
-    else:
-        print(
-            "  orientation unavailable: {} buffer={}/{}".format(
-                message.get("orientation_error", "unknown"),
-                len(buffers[device_id]),
-                BUFFER_LIMIT,
-            )
-        )
+    print("[JETSON RELAY] device={} seq={} chest_reference_valid={} epoch={}".format(
+        message["device_id"], message.get("sequence", "-"),
+        message.get("chest_reference", {}).get("valid", 0),
+        message.get("gateway_calibration_epoch", 0),
+    ))
 
 
 def handle_data(raw, source):
@@ -996,13 +963,17 @@ def drain_udp(udp_socket, handler, extra=None):
     for _ in range(20):
         try:
             raw, source = udp_socket.recvfrom(2048)
-        except OSError:
-            break
-
-        if extra is None:
-            handler(raw, source)
-        else:
-            handler(raw, source, extra)
+        except OSError as error:
+            if error.args and error.args[0] in (11, 35, 110, 116, 119):
+                break
+            raise
+        try:
+            if extra is None:
+                handler(raw, source)
+            else:
+                handler(raw, source, extra)
+        except (ValueError, TypeError, KeyError) as error:
+            print("[DROP] malformed UDP from {}: {}".format(source[0], error))
 
 
 def update_offline(now_ms):
@@ -1020,136 +991,100 @@ def update_offline(now_ms):
 
 
 def print_summary(now_ms):
-    mqtt_state = "connected" if mqtt_client is not None else "disconnected"
-    chest_imu_state = "online" if chest_imu_is_fresh(now_ms) else "offline"
-
-    print(
-        "[SUMMARY] mqtt={} chest_imu={}".format(
-            mqtt_state,
-            chest_imu_state,
-        )
-    )
-
+    mqtt_state = "disconnected"
+    rx_age = -1
+    if mqtt_client is not None:
+        mqtt_state = "awaiting_pingresp" if mqtt_client.ping_outstanding_ms is not None else "connected"
+        if mqtt_client.last_rx_ms is not None:
+            rx_age = time.ticks_diff(now_ms, mqtt_client.last_rx_ms)
+    chest_state = "online" if chest_imu_is_fresh(now_ms) else "offline"
+    print("[SUMMARY] mqtt={} mqtt_rx_age_ms={} chest_imu={} free={} stage={}".format(
+        mqtt_state, rx_age, chest_state, gc.mem_free(), last_stage))
     for device_id in SENSOR_DEVICES:
-        pending = 0
-        for item in buffers[device_id]:
-            if not item["sent"]:
-                pending += 1
-
         if device_id == GATEWAY_ID:
-            state = chest_imu_state
-            calibrated = "reference"
+            state, calibrated = chest_state, "reference"
         else:
             info = devices.get(device_id)
-
-            if info is None:
-                state = "not_seen"
-            elif info["online"]:
-                state = "online"
-            else:
-                state = "offline"
-
-            calibrated = (
-                "yes" if device_id in orientation_references else "no"
-            )
-
-        print(
-            "  {}: {} buffer={}/{} pending={} calibrated={}".format(
-                device_id,
-                state,
-                len(buffers[device_id]),
-                BUFFER_LIMIT,
-                pending,
-                calibrated,
-            )
-        )
+            state = "not_seen" if info is None else ("online" if info["online"] else "offline")
+            calibrated = "jetson"
+        stats = buffer_stats[device_id]
+        print("  {}: {} pending={}/{} sent={} expired={} superseded={} overflow={} calibrated={}".format(
+            device_id, state, len(buffers[device_id]), BUFFER_LIMIT,
+            stats["sent"], stats["expired"], stats["superseded"],
+            stats["overflow"], calibrated))
 
 
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 def run():
-    global mqtt_client
-
+    global watchdog
     discovery_udp = None
     data_udp = None
-    last_summary_ms = time.ticks_ms()
-
-    print("=== CareCall chest relative-orientation gateway ===")
-    print("boot_id={}".format(CHEST_BOOT_ID))
-    print("Jetson MQTT={}:{}".format(JETSON_HOST, MQTT_PORT))
-    print("Per-sensor buffer limit={}".format(BUFFER_LIMIT))
-    print("Chest BNO085 I2C0 SDA=GP4 SCL=GP5")
-    print("Calibration button GP16 active-low with internal pull-up")
-    print("Put chest and limbs in the neutral pose before first IMU data.")
-
+    last_summary = time.ticks_ms()
+    print("=== CareCall chest relay: bounded recovery 2026-09-14 ===")
+    print("boot_id={} reset_cause={}".format(CHEST_BOOT_ID, machine.reset_cause()))
+    print("MQTT={} BNO_patch={}".format(CARECALL_MQTT_VERSION, CARECALL_BNO_VERSION))
+    print("Jetson={}:{} IDs={} GP4/GP5 IMU, GP16 calibration".format(JETSON_HOST, MQTT_PORT, SENSOR_DEVICES))
+    if WATCHDOG_ENABLED:
+        watchdog = machine.WDT(timeout=WATCHDOG_TIMEOUT_MS)
+        print("[WDT] enabled timeout_ms={}".format(WATCHDOG_TIMEOUT_MS))
     try:
         while True:
-            now_ms = time.ticks_ms()
-
-            poll_calibration_button(now_ms)
-
-            # Chest IMU remains active even while Jetson is turned off.
-            poll_chest_imu(now_ms)
-
-            if not wlan.isconnected():
-                set_led(False)
+            try:
+                stage("local_tasks")
+                poll_calibration_button(time.ticks_ms())
+                stage("bno_poll")
+                poll_chest_imu(time.ticks_ms())
+                feed_watchdog()
+                stage("wifi_check")
+                if not wlan.isconnected():
+                    set_led(False)
+                    reset_mqtt()
+                    close_udp(discovery_udp)
+                    close_udp(data_udp)
+                    discovery_udp = data_udp = None
+                    connect_wifi()
+                if discovery_udp is None:
+                    stage("udp_open")
+                    discovery_udp = open_udp(DISCOVERY_PORT)
+                    data_udp = open_udp(DATA_PORT)
+                    print("[UDP] listening {}, {}".format(DISCOVERY_PORT, DATA_PORT))
+                stage("udp_discovery")
+                drain_udp(discovery_udp, handle_discovery, discovery_udp)
+                stage("udp_data")
+                drain_udp(data_udp, handle_data)
+                feed_watchdog()
+                maintain_mqtt()
+                flush_buffers()
+                maybe_reset_radio()
+                now = time.ticks_ms()
+                update_offline(now)
+                if time.ticks_diff(now, last_summary) >= SUMMARY_INTERVAL_MS:
+                    print_summary(now)
+                    gc.collect()
+                    last_summary = now
+                feed_watchdog()
+                time.sleep_ms(20)
+            except Exception as error:
+                # Print the original exception BEFORE any cleanup.
+                report_error("main loop", error)
                 reset_mqtt()
                 close_udp(discovery_udp)
                 close_udp(data_udp)
-                discovery_udp = None
-                data_udp = None
-                connect_wifi()
-
-            if discovery_udp is None:
-                discovery_udp = open_udp(DISCOVERY_PORT)
-                data_udp = open_udp(DATA_PORT)
-                print(
-                    "[UDP] listening {}, {}".format(
-                        DISCOVERY_PORT,
-                        DATA_PORT,
-                    )
-                )
-
-            drain_udp(discovery_udp, handle_discovery, discovery_udp)
-            drain_udp(data_udp, handle_data)
-
-            maintain_mqtt()
-            flush_buffers()
-
-            now_ms = time.ticks_ms()
-            update_offline(now_ms)
-
-            if (
-                time.ticks_diff(now_ms, last_summary_ms)
-                >= SUMMARY_INTERVAL_MS
-            ):
-                print_summary(now_ms)
-                last_summary_ms = now_ms
+                discovery_udp = data_udp = None
                 gc.collect()
-
-            time.sleep_ms(20)
-
+                feed_watchdog()
+                time.sleep_ms(100)
     except KeyboardInterrupt:
-        print("[CHEST] stopped by user")
-
+        print("[CHEST] stopped; an already-running WDT will reset the Pico")
     finally:
-        if mqtt_client is not None:
-            try:
-                status_topic = "device/{}/status".format(GATEWAY_ID)
-                mqtt_client.publish(
-                    status_topic.encode("utf-8"),
-                    mqtt_status_payload("offline"),
-                    retain=True,
-                    qos=1,
-                )
-            except Exception:
-                pass
-
         reset_mqtt()
-        set_led(False)
         close_udp(discovery_udp)
         close_udp(data_udp)
+        set_led(False)
 
 
 run()
+
+
