@@ -1,56 +1,147 @@
-"""CareCall right-leg Pico 2 W configuration."""
+"""CareCall left-arm Pico 2 W configuration."""
 
 SCHEMA_VERSION = 1
-DEVICE_ID = "right_leg"
-PICO_HOSTNAME = "carecall-right-leg-pico"
+
+DEVICE_ID = " "
+PICO_HOSTNAME = "carecall-left-arm-pico"
 FRAME_ID = "right_leg_imu_link"
 
-# Jetson setup AP and authenticated device provisioning.
+
+# ============================================================
+# Jetson setup AP and authenticated device provisioning
+# ============================================================
+
 SETUP_AP_SSID = "CareCall-Jetson-Setup"
-SETUP_AP_PASSWORD = "12345678"
+SETUP_AP_PASSWORD = " "
+
 SETUP_AP_IP = "10.42.0.1"
 SETUP_AP_PORT = 80
 
-# On the Jetson, run:
-#   sudo cat /etc/carecall/device-provision.token
-# Paste the same existing Jetson token into every Pico config.py.
-DEVICE_PROVISION_TOKEN = "PASTE_JETSON_DEVICE_PROVISION_TOKEN_HERE"
+
+# IMPORTANT:
+# Use the real provisioning token configured on the Jetson.
+# Do not upload the real token to a public GitHub repository.
+DEVICE_PROVISION_TOKEN = " "
+
+
+# ============================================================
+# Wi-Fi credential storage
+# ============================================================
 
 WIFI_CREDENTIALS_FILE = "wifi_config.json"
 WIFI_CREDENTIALS_BACKUP_FILE = "wifi_config.bak"
+
+
+# ============================================================
+# Wi-Fi connection / recovery
+# ============================================================
+
 WIFI_CONNECT_TIMEOUT_MS = 30000
+
 SETUP_AP_CONNECT_TIMEOUT_MS = 30000
 SETUP_AP_RETRY_MS = 10000
+
 WIFI_RECONNECT_DELAY_MS = 10000
+
+
+# Hard WLAN reset:
+# wlan.active(False) -> wait -> wlan.active(True)
+WIFI_RESET_OFF_MS = 1000
+
+
+# Disable Wi-Fi power saving when supported.
+WIFI_DISABLE_POWER_SAVE = True
+
+
+# ============================================================
+# Provisioning HTTP
+# ============================================================
+
 PROVISION_POLL_MS = 1000
 PROVISION_HTTP_TIMEOUT_SECONDS = 10
 PROVISION_MAX_RESPONSE_BYTES = 4096
 
-# UDP discovery and sensor data sent to the chest Pico.
+
+# ============================================================
+# UDP discovery
+# ============================================================
+
 UDP_DISCOVERY_PORT = 5004
 UDP_DATA_PORT_DEFAULT = 5005
+
+# Limb continues sending discovery packets even after
+# discovering the chest. This allows automatic IP updates.
 DISCOVERY_INTERVAL_MS = 5000
-CHEST_OFFER_TTL_MS = 15000
+
 DISCOVERY_RECEIVE_BYTES = 512
 
-# BNO085: I2C0, SDA GP4, SCL GP5. SW-420 DO: GP16.
+
+# IMPORTANT:
+# CHEST_OFFER_TTL_MS is intentionally NOT used.
+#
+# Once chest_address is discovered, the limb keeps using it.
+# Missing chest_offer packets must NOT clear chest_address.
+#
+# If a new chest_offer arrives from a different IP,
+# main.py updates chest_address automatically.
+
+
+# ============================================================
+# BNO085
+# I2C0
+# SDA -> GP4
+# SCL -> GP5
+# ============================================================
+
 I2C_ID = 0
+
 BNO085_SDA_PIN = 4
 BNO085_SCL_PIN = 5
+
 BNO085_I2C_FREQ = 100000
 BNO085_I2C_TIMEOUT_US = 200000
+
+
+# ============================================================
+# SW-420 shock sensor
+# DO -> GP16
+# ============================================================
+
 SW420_DO_PIN = 16
+
 SHOCK_ACTIVE_LEVEL = 1
 SHOCK_DEBOUNCE_MS = 40
+
+
+# ============================================================
+# BNO085 report rates
+# ============================================================
 
 ACCEL_REPORT_HZ = 20
 GYRO_REPORT_HZ = 20
 QUATERNION_REPORT_HZ = 10
+
+
+# ============================================================
+# Sensor / network transmission intervals
+# ============================================================
+
 SENSOR_READ_INTERVAL_MS = 50
+
+# Send IMU data every 2 seconds.
 IMU_SEND_INTERVAL_MS = 2000
+
+# Send heartbeat every 10 seconds.
 HEARTBEAT_INTERVAL_MS = 10000
+
+
+# ============================================================
+# Topics
+# ============================================================
 
 TOPIC_STATUS = "device/right_leg/status"
 TOPIC_HEARTBEAT = "device/right_leg/heartbeat"
+
 TOPIC_IMU = "sensor/right_leg/imu"
 TOPIC_SHOCK = "sensor/right_leg/shock"
+
