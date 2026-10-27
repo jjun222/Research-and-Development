@@ -3,28 +3,40 @@
 # ---------------------------------------------------------------------------
 # Jetson setup AP and device provisioning
 # ---------------------------------------------------------------------------
-# This is the setup AP already created on the Jetson.
 SETUP_AP_SSID = "CareCall-Jetson-Setup"
-SETUP_AP_PASSWORD = "12345678"
+SETUP_AP_PASSWORD = " "
 SETUP_AP_IP = "10.42.0.1"
 SETUP_AP_PORT = 80
 
-# On the Jetson, run:
-#   sudo cat /etc/carecall/device-provision.token
-# Paste that value below. Never paste the token into chat or a public repo.
-DEVICE_PROVISION_TOKEN = "***가림***"
+# IMPORTANT:
+# Replace this placeholder with the REAL token already used by your Body Pico.
+# Never commit the real token to a public repository.
+DEVICE_PROVISION_TOKEN = " "
 
-# The received router credentials are stored on the Pico flash.
 WIFI_CREDENTIALS_FILE = "wifi_config.json"
 WIFI_CREDENTIALS_BACKUP_FILE = "wifi_config.bak"
 
-# The Pico retries forever, so Jetson/Pico power-on order does not matter.
 WIFI_CONNECT_TIMEOUT_MS = 30000
 SETUP_AP_CONNECT_TIMEOUT_MS = 30000
 SETUP_AP_RETRY_MS = 10000
 PROVISION_POLL_MS = 1000
-PROVISION_HTTP_TIMEOUT_SECONDS = 10
+PROVISION_HTTP_TIMEOUT_SECONDS = 3
 PROVISION_MAX_RESPONSE_BYTES = 4096
+
+# Network recovery settings.
+WIFI_RECONNECT_DELAY_MS = 5000
+WIFI_RESET_OFF_MS = 1000
+WIFI_DISABLE_POWER_SAVE = True
+
+# Hardware watchdog / blocking-network protection.
+# Pico 2 W uses the RP2 port. 8000 ms is conservative and also fits RP2040 limits.
+WATCHDOG_ENABLED = True
+WATCHDOG_TIMEOUT_MS = 8000
+
+# MQTT operations are bounded so a dead Jetson does not freeze the Body loop.
+MQTT_CONNECT_TIMEOUT_SECONDS = 2
+MQTT_SOCKET_TIMEOUT_SECONDS = 2
+MQTT_RESOLVE_RETRY_MS = 15000
 
 # ---------------------------------------------------------------------------
 # Chest gateway protocol
@@ -43,7 +55,7 @@ ALLOWED_DEVICES = (
 )
 
 BUFFER_LIMIT = 20
-DEVICE_OFFLINE_MS = 15000
+DEVICE_OFFLINE_MS = 30000
 SUMMARY_INTERVAL_MS = 5000
 
 # ---------------------------------------------------------------------------
@@ -57,4 +69,5 @@ MQTT_KEEPALIVE = 30
 MQTT_RETRY_MS = 5000
 MQTT_PING_MS = 15000
 MQTT_FLUSH_PER_LOOP = 4
+
 
